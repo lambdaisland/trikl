@@ -14,7 +14,44 @@ bring it up to date.
 
 This is still very much work in progress and subject to change.
 
-See `trikl/demo.clj` for an example.
+## Example
+
+Currently Trikl only works as a telnet server.
+
+To try it out on the REPL you can do something like this:
+
+``` clojure
+(require '[trikl.core :as t])
+
+;; store clients so we can poke at them from the REPL
+(def clients (atom []))
+
+;; Start the server on port 1357, as an accept handler just store the client in
+;; the atom.
+(def stop-server (t/start-server #(swap! clients conj %) 1357))
+
+;; in a terminal: telnet localhost 1357
+
+#_(stop-server) ;; disconnect all clients and stop listening for connections
+
+;; Render hiccup! Re-run this as often as you like, only changes are sent to the client.
+(t/render (last @clients)
+          [:box {:x 10 :y 5 :width 20 :height 10 :styles {:bg [50 50 200]}}
+           [:box {:x 1 :y 1 :width 18 :height 8 :styles {:bg [200 50 0]}}
+            [:box {:x 3 :y 1}
+             [:span {:styles {:fg [30 30 150]}} "hello\n"]
+             [:span {:styles {:fg [100 250 100]}} "  world"]]]])
+
+;; Listen for input events
+(t/add-listener (last @clients)
+                ::my-listener
+                (fn [event]
+                  (prn event)))
+```
+
+Result:
+
+![](example.png)
 
 ## True Color
 
