@@ -1,0 +1,9 @@
+{:paths ["src" "test" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.10.0-beta5"}
+        lambdaisland/ansi {:mvn/version "0.1.6"}}
+ :aliases
+ {:dev
+  {}
+
+  :test
+  {:extra-deps {lambdaisland/kaocha {:local/root "/home/arne/github/kaocha"} #_{:mvn/version "0.0-248"}}}}}
