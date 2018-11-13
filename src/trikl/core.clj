@@ -59,11 +59,13 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn split-el [[tag & rst]]
-  (let [fst (first rst)]
-    (if (map? fst)
-      [tag fst (rest rst)]
-      [tag {} rst])))
+(defn split-el [el]
+  (when (vector? el)
+    (let [[tag & rst] el]
+      (let [fst (first rst)]
+        (if (map? fst)
+          [tag fst (rest rst)]
+          [tag {} rst])))))
 
 (defmulti draw (fn [element screen]
                  (if (vector? element)
@@ -74,7 +76,7 @@
   (let [[x y] (:pos screen)
         [min-x min-y max-x max-y] (:viewport screen)
         line (remove #{\return} ;; don't want no carriage returns
-                     (subs line 0 (min (count line) (- max-x x))))]
+                     (subs line 0 (max 0 (min (count line) (- max-x x)))))]
     (reduce (fn [screen char]
               (-> screen
                   (update-in [:charels (row screen) (col screen)]
@@ -88,15 +90,24 @@
 (defmethod draw java.util.List [els screen]
   (reduce #(draw %2 %1) screen els))
 
-(defmethod draw :box [el screen]
-  (let [[_ attrs children] (split-el el)
-        [vx vy vw vh] (:viewport screen)
+(defmethod draw clojure.lang.Fn [el screen]
+  (let [[f attrs children] (split-el)]
+    (draw (f attrs children) screen)))
+
+(defn apply-viewport [attrs screen]
+  (let [[vx vy vw vh] (:viewport screen)
         {:keys [x y width height styles]
          :or {x 0 y 0 width vw height vh}} attrs
         x (min (+ x vx) (+ vx vw))
         y (min (+ y vy) (+ vy vh))
         width (min width (- vw x))
-        height (min height (- vh y))
+        height (min height (- vh y))]
+    [x y width height]))
+
+(defmethod draw :box [el screen]
+  (let [[_ attrs children] (split-el el)
+        [x y width height] (apply-viewport attrs screen)
+        styles (:styles attrs)
         coords (for [col (range x (+ x width))
                      row (range y (+ y height))]
                  [row col])
@@ -136,9 +147,96 @@
               screen
               lines))))
 
+(defmethod draw Character [char screen]
+  (let [[x y] (:pos screen)
+        [min-x min-y max-x max-y] (:viewport screen)]
+    (if (and (<= min-x x max-x) (<= min-y y max-y))
+      (-> screen
+          (update-in [:charels (row screen) (col screen)]
+                     #(-> %
+                          (assoc :char char)
+                          (merge (:styles screen))))
+          (update-col inc))
+      screen)))
+
+(defmethod draw :line-box [el screen]
+  (let [[_ attrs children] (split-el el)
+        [x y width height] (apply-viewport attrs screen)
+        [tl t tr r br b bl l] (:lines attrs "╭─╮│╯─╰│")]
+    (draw [:box attrs
+           tl (repeat (- width 2) t) tr "\n"
+           (repeat (- height 2)
+                   (str l
+                        (apply str (repeat (- width 2) \space))
+                        r
+                        "\n"))
+           bl (repeat (- width 2) b) br "\n"
+           [:box (assoc attrs :x 1 :y 1 :width (- width 2) :height (- height 2))
+            children]]
+          screen)))
+
+(defmethod draw :cols [el screen]
+  (let [[_ attrs children] (split-el el)
+        [x y width height] (apply-viewport attrs screen)
+        ratios             (:ratios attrs (repeat (count children) 1))
+        widths             (map #(:width (second (split-el %))) children)
+        remaining          (- width (apply + (remove nil? widths)))
+        total              (apply + (keep (fn [[w r]]
+                                            (when (nil? w) r))
+                                          (map vector widths ratios)))]
+    (assert (= (count children) (count ratios) (count widths)))
+    (let [children (reduce (fn [res [c w r]]
+                             (let [x  (apply + (map #(get-in % [1 :width]) res))
+                                   ww (or w (Math/round (double (/ (* remaining r) total))))
+                                   ww (if (= (count res) (dec (count children)))
+                                        (- width x)
+                                        ww)]
+                               (conj res
+                                     (if w
+                                       (-> c
+                                           (assoc-in [1 :x] x)
+                                           (assoc-in [1 :width] ww))
+                                       [:box {:x x
+                                              :width ww}
+                                        c]))))
+                           []
+                           (map vector children widths ratios))]
+      (->> children
+           (reduce (fn [s ch] (draw ch s)) screen)))))
+
+(defmethod draw :rows [el screen]
+  (let [[_ attrs children] (split-el el)
+        [x y width height] (apply-viewport attrs screen)
+        ratios             (:ratios attrs (repeat (count children) 1))
+        heights            (map #(:height (second (split-el %))) children)
+        remaining          (- height (apply + (remove nil? heights)))
+        total              (apply + (keep (fn [[w r]]
+                                            (when (nil? w) r))
+                                          (map vector heights ratios)))]
+    (assert (= (count children) (count ratios) (count heights)))
+    (let [children (reduce (fn [res [c w r]]
+                             (let [y  (apply + (map #(get-in % [1 :height]) res))
+                                   ww (or w (Math/round (double (/ (* remaining r) total))))
+                                   ww (if (= (count res) (dec (count children)))
+                                        (- height y)
+                                        ww)]
+                               (conj res
+                                     (if w
+                                       (-> c
+                                           (assoc-in [1 :y] y)
+                                           (assoc-in [1 :height] ww))
+                                       [:box {:y     y
+                                              :height ww}
+                                        c]))))
+                           []
+                           (map vector children heights ratios))]
+      (->> children
+           (reduce (fn [s ch] (draw ch s)) screen)))))
+
 (defn parse-screen-size [csi]
-  (let [[_ row col] (re-find #"(\d+);(\d+)R" csi)]
-    [(Integer/parseInt row) (Integer/parseInt col)]))
+  (when csi
+    (let [[_ row col] (re-find #"(\d+);(\d+)R" csi)]
+      [(Integer/parseInt row) (Integer/parseInt col)])))
 
 (defn handle-input [in handler]
   (let [reader (io/reader in)
@@ -150,15 +248,17 @@
         (if x
           (cond
             (= ESC x)
-            (let [[_ csi rst] (ansi/next-csi (apply str x xs))]
-              (handler {:type :screen-size
-                        :screen-size (parse-screen-size csi)})
+            (let [[_ csi rst] (ansi/next-csi (apply str x xs))
+                  size        (parse-screen-size csi)]
+              (when size
+                (handler {:type        :screen-size
+                          :screen-size size}))
               (recur rst))
 
             :else
             (do
-              (handler {:type :input
-                        :key (if (= \return x) \newline x)
+              (handler {:type      :input
+                        :key       (if (= \return x) \newline x)
                         :codepoint (long x)})
               (recur xs))))))))
 
@@ -283,19 +383,29 @@
 (defn remove-listener [client key]
   (swap! (:listeners client) dissoc key))
 
+(defmacro time-info [expr desc]
+  `(let [start# (System/nanoTime)
+         ret# ~expr]
+     (println (str ~desc ": " (/ (double (- (. System (nanoTime)) start#)) 1000000.0) " ms"))
+     ret#))
+
 (defn render [{:keys [size screen out] :as client} element]
   (prn [:render @size])
   (when-let [size @size]
     (let [empty-screen (apply virtual-screen size)
           prev-screen  @screen
-          next-screen  (draw element empty-screen)
+          next-screen  (time-info (draw element empty-screen) "draw")
           sb           (StringBuilder.)
-          new-screen   (diff-screen sb (or prev-screen empty-screen) next-screen)
+          new-screen   (time-info (diff-screen sb (or prev-screen empty-screen) next-screen) "diff")
           commands     (str sb)]
-      (.write out (.getBytes commands))
       (request-screen-size out)
+      (.write out (.getBytes commands))
       (reset! screen new-screen)
       nil)))
+
+(defn force-render [client element]
+  (reset! (:screen client) (apply virtual-screen @(:size client)))
+  (render client element))
 
 (defn start-server
   ([client-handler]
