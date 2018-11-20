@@ -1,7 +1,8 @@
 (ns trikl.telnet
-  (:import [javax.net ServerSocketFactory]))
+  (:import java.net.ServerSocket
+           javax.net.ServerSocketFactory))
 
-(defn server-socket [port]
+(defn ^ServerSocket server-socket [^long port]
   (.createServerSocket (ServerSocketFactory/getDefault) port))
 
 (defn accept-connection [server-socket]
