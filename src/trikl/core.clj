@@ -1,7 +1,6 @@
 (ns trikl.core
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [lambdaisland.ansi :as ansi]
             [trikl.telnet :as telnet])
   (:import clojure.lang.PersistentVector
            java.io.OutputStream
@@ -18,6 +17,7 @@
 
 (def ESC \u001b)
 (def RESET (str ESC "[m"))
+(def CSI_PATTERN #"\x1b\[[\x30-x3F]*[\x20-\x2F]*[\x40-\x7E]")
 
 (defrecord Charel [char fg bg])
 (defrecord VirtualScreen [pos size bounding-box styles stack ^PersistentVector charels])
@@ -256,23 +256,24 @@
         n      (.read reader buffer)]
     (if (= -1 n)
       :eof
-      (loop [[x & xs] (take n buffer)]
-        (if x
+      (loop [[x :as xs] (take n buffer)]
+        (when x
           (cond
             (= ESC x)
-            (let [[_ csi rst] (ansi/next-csi (apply str x xs))
-                  size        (parse-screen-size csi)]
-              (when size
-                (handler {:type        :screen-size
-                          :screen-size size}))
-              (recur rst))
+            (if-let [csi (re-find CSI_PATTERN (apply str xs))]
+              (do
+                (when-let [size (parse-screen-size csi)]
+                  (handler {:type        :screen-size
+                            :screen-size size}))
+                (recur (drop (count csi) xs)))
+              (recur (next xs)))
 
             :else
             (do
               (handler {:type      :input
                         :key       (if (= \return x) \newline x)
                         :codepoint (long x)})
-              (recur xs))))))))
+              (recur (next xs)))))))))
 
 (defn request-screen-size [^OutputStream out]
   (let [csi (fn [& args]
@@ -306,10 +307,9 @@
            old-ch  (and (.hasNext old-it) (.next old-it))
            new-ch  (and (.hasNext new-it) (.next new-it))]
       (let [old-next? (.hasNext old-it)
-            new-next? (.hasNext new-it)
-            cont?     (or old-next? new-next?)]
+            new-next? (.hasNext new-it)]
         (if (= old-ch new-ch)
-          (if cont?
+          (if new-next?
             (recur styles
                    (inc col-idx)
                    false
@@ -325,7 +325,7 @@
             (when bg? (.append sb (csi-bg bg)))
             (.append sb char)
             (let [new-styles (if (or fg? bg?) new-ch styles)]
-              (if cont?
+              (if new-next?
                 (recur new-styles
                        (inc col-idx)
                        true
@@ -343,10 +343,9 @@
            old-row (and (.hasNext old-row-it) (.next old-row-it))
            new-row (and (.hasNext new-row-it) (.next new-row-it))]
       (let [old-next? (.hasNext old-row-it)
-            new-next? (.hasNext new-row-it)
-            cont?     (or old-next? new-next?)]
+            new-next? (.hasNext new-row-it)]
         (let [styles (diff-row sb row-idx styles old-row new-row)]
-          (if cont?
+          (if new-next?
             (recur styles
                    (inc row-idx)
                    (when old-next? (.next old-row-it))
@@ -433,7 +432,9 @@
         prev-screen  @screen
         prev-screen  (let [resize (- (count (:charels prev-screen)) (first size))]
                        (if (> resize 0)
-                         (update prev-screen :charels #(into [] (drop resize) %))
+                         (do
+                           (println "dropping" resize "lines")
+                           (update prev-screen :charels #(into [] (drop resize) %)))
                          prev-screen))
         next-screen  (draw element empty-screen)
         sb           (StringBuilder.)
