@@ -5,7 +5,7 @@
 (defn ^ServerSocket server-socket [^long port]
   (.createServerSocket (ServerSocketFactory/getDefault) port))
 
-(defn accept-connection [server-socket]
+(defn accept-connection [^ServerSocket server-socket]
   (doto (.accept server-socket)
     (.setTcpNoDelay true)))
 
@@ -23,11 +23,11 @@
    :NAWS            0x1f
    :LINEMODE        0x22})
 
-(defn send-telnet-command [out & args]
+(defn send-telnet-command [^java.net.SocketOutputStream out & args]
   (->> args
        (map #(TELNET % %))
        (map unchecked-byte)
-       (into-array Byte/TYPE)
+       ^bytes (into-array Byte/TYPE)
        (.write out)))
 
 (defn prep-telnet [out]
