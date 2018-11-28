@@ -188,6 +188,18 @@ automatically re-render when the atom changes.
 (t/unwatch! app-state)
 ```
 
+## Querying the screen size and bounding box
+
+During rendering you can use `t/*screen-size*` and `t/*bounding-box*` to find
+the current dimensions you are working in. There's also a `(box-size)` helpers
+which only returns the `[width height]` of the bounding box, rather than `[x y
+width height]`. This should greatly alleviate the need to write your own drawing
+functions, as you can now do everything with custom elements and a combination
+of `[:span ...]` and `[:box ...]`. The main reason to write custom drawing
+functions would be for performance, when what you are drawing does not easily
+fit in the span/box paradigm. If you find yourself creating a span per character
+then maybe a custom drawing function makes sense.
+
 ## Custom drawing functions
 
 To implement custom elements, extend the `t/draw` multimethod. The method takes
