@@ -7,6 +7,21 @@
 
 (def stop-server (t/start-server #(swap! clients conj %) 1357))
 
+(def stop-server (t/start-server #(t/render % [:cols
+                                               [:line-box { :styles {:bg [50 50 200]}}]
+                                               [:line-box { :styles {:bg [200 50 0]}}
+                                                [:box {:x 3 :y 1}
+                                                 [:span {:styles {:fg [30 30 150]}} "hello\n"]
+                                                 [:span {:styles {:fg [100 250 100]}} \x "  world"]]]]) 1357))
+
+(t/render (last @clients)
+          [:cols
+           [:line-box { :styles {:bg [50 50 200]}}]
+           [:line-box { :styles {:bg [200 50 0]}}
+            [:box {:x 3 :y 1}
+             [:span {:styles {:fg [30 30 150]}} "hello\n"]
+             [:span {:styles {:fg [100 250 100]}} \x "  world"]]]])
+
 #_(stop-server)
 
 (reset! (:size (last @clients)) [9 19])

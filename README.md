@@ -16,9 +16,11 @@ This is still very much work in progress and subject to change.
 
 ## Example
 
-Currently Trikl only works as a telnet server.
+You can use Trikl directly by hooking it up to STDIN/STDOUT, or you can use it
+as a telnet server. The telnet server is great because it makes it easy to try
+stuff out from the REPL.
 
-To try it out on the REPL you can do something like this:
+For instance you can do something like this:
 
 ``` clojure
 (require '[trikl.core :as t])
@@ -35,7 +37,7 @@ To try it out on the REPL you can do something like this:
 #_(stop-server) ;; disconnect all clients and stop listening for connections
 
 ;; Render hiccup! Re-run this as often as you like, only changes are sent to the client.
-(t/render (last @clients)
+(t/render (last @clients) #_(t/stdio-client)
           [:box {:x 10 :y 5 :width 20 :height 10 :styles {:bg [50 50 200]}}
            [:box {:x 1 :y 1 :width 18 :height 8 :styles {:bg [200 50 0]}}
             [:box {:x 3 :y 1}
@@ -48,6 +50,8 @@ To try it out on the REPL you can do something like this:
                 (fn [event]
                   (prn event)))
 ```
+
+Use `stdio-client` to hook up the terminal the process is running in.
 
 Result:
 
@@ -249,6 +253,32 @@ iTerm and gnome-terminal should both be fine, but if you're using Tmux and you'r
 set -g default-terminal "xterm-256color"
 set-option -ga terminal-overrides ",xterm-256color:Tc"
 ```
+
+## Using netcat
+
+Not all systems come with telnet installed, notably recent versions of Mac OS X
+have stopped bundling it. The common advice you'll find is to use Netcat (`nc`) instead, but these two are not the same. Telnet understands certain binary codes to configure your terminal, which Trikl needs to function correctly.
+
+You can `brew install telnet`, or in a pinch you can use `stty` to configure
+your terminal to not echo input, and to enable "raw" (direct, unbuffered) mode.
+
+Make sure to invoke `stty` and `nc` as a single command like this:
+
+```
+stty -echo -icanon && nc localhost 1357
+```
+
+To undo the changes to your terminal do
+
+```
+stty +echo +icanon
+```
+
+## Graal compatibility
+
+Trikl contains enough type hints to prevent Clojure's type reflection, which
+makes it compatible with GraalVM. This means you can compile your project to
+native binaries that boot instantly. Great for tooling!
 
 ## License
 

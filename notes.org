@@ -1,0 +1,6 @@
+* app ideas
+** roguelike / rpg
+** "graphics editor" / level editor
+** interactive version upgrades
+** interactive test runner
+** admin UI for app

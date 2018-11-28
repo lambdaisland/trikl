@@ -3,26 +3,29 @@
             [clojure.test :refer :all]
             [lambdaisland.ansi :as ansi]))
 
-(let [sb (StringBuilder.)
-      styles (t/diff-row
-              sb
-              0
-              {}
-              [t/BLANK]
-              [(t/map->Charel {:char \x})])]
-  [(ansi/token-stream (str sb)) styles])
-;; => [[{:row 1, :col 1} "x"] {}]
+(is (= [[{:row 1, :col 1} "x"] {}]
+       (let [sb (StringBuilder.)
+             styles (t/diff-row
+                     sb
+                     0
+                     {}
+                     [t/BLANK]
+                     [(t/map->Charel {:char \x})])]
+         [(ansi/token-stream (str sb)) styles])))
 
 
-(let [sb (StringBuilder.)
-      styles (t/diff-row
-              sb
-              0
-              {}
-              [(t/map->Charel {:char \x})]
-              [(t/map->Charel {:char \x})])]
-  [(ansi/token-stream (str sb)) styles])
-;; => [[] {}]
+(is (=
+     (let [sb (StringBuilder.)
+           styles (t/diff-row
+                   sb
+                   0
+                   {}
+                   [(t/map->Charel {:char \x})]
+                   [(t/map->Charel {:char \x})])]
+       [(ansi/token-stream (str sb)) styles])
+     ))
+
+(+ 1 1)
 
 (let [sb (StringBuilder.)
       styles (t/diff-row

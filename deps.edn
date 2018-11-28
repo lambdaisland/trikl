@@ -6,4 +6,5 @@
   {}
 
   :test
-  {:extra-deps {lambdaisland/kaocha {:mvn/version "0.0-266"}}}}}
+  {:extra-deps {lambdaisland/kaocha {:mvn/version "0.0-266"}
+                lambdaisland/ansi {:mvn/version "RELEASE"}}}}}
