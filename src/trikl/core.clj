@@ -3,10 +3,12 @@
             [clojure.string :as str]
             [trikl.telnet :as telnet])
   (:import clojure.lang.PersistentVector
-           [java.io OutputStream IOException]
-           [java.net ServerSocket Socket]
            java.util.Iterator
-           java.lang.ProcessBuilder$Redirect))
+           java.lang.ProcessBuilder$Redirect
+           [java.io InputStream OutputStream IOException]
+           [java.net ServerSocket Socket]
+           [java.nio.charset CharsetDecoder Charset CodingErrorAction]
+           [java.nio ByteBuffer CharBuffer]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* true #_:warn-on-boxed)
@@ -60,10 +62,10 @@
 (defn update-row [screen f & args]
   (apply update-in screen [:pos 1] f args))
 
-(defn col [screen]
+(defn col ^long [screen]
   (get-in screen [:pos 0]))
 
-(defn row [screen]
+(defn row ^long [screen]
   (get-in screen [:pos 1]))
 
 (defn push-styles [screen styles]
@@ -156,7 +158,8 @@
 
 (defmethod draw String [s screen]
   (let [[x y] (:pos screen)
-        [min-x min-y max-x max-y] (:bounding-box screen)]
+        [^long min-x ^long min-y ^long max-x ^long max-y]
+        (:bounding-box screen)]
     (let [lines (str/split s #"(?<=\n)")]
       (reduce (fn [screen line]
                 (if (>= (row screen) max-y)
@@ -171,7 +174,8 @@
 
 (defmethod draw Character [char screen]
   (let [[x y] (:pos screen)
-        [min-x min-y max-x max-y] (:bounding-box screen)]
+        [^long min-x ^long min-y ^long max-x ^long max-y]
+        (:bounding-box screen)]
     (if (and (<= min-x x max-x) (<= min-y y max-y))
       (-> screen
           (update-in [:charels (row screen) (col screen)]
@@ -258,46 +262,6 @@
         (->> children
              (reduce (fn [s ch] (draw ch s)) screen))))))
 
-(defn parse-screen-size [csi]
-  (when csi
-    (when-let [[_ row col] (re-find #"(\d+);(\d+)R" csi)]
-      [(Integer/parseInt row) (Integer/parseInt col)])))
-
-(defn handle-input [in handler]
-  (let [reader (io/reader in)
-        buffer (char-array 1024)
-        n      (.read reader buffer)]
-    (if (= -1 n)
-      :eof
-      (loop [[x :as xs] (take n buffer)]
-        (when x
-          (cond
-            (= ESC x)
-            (if-let [csi (re-find CSI_PATTERN (apply str xs))]
-              (do
-                (when-let [size (parse-screen-size csi)]
-                  (handler {:type        :screen-size
-                            :screen-size size}))
-                (recur (drop (count csi) xs)))
-              (recur (next xs)))
-
-            :else
-            (do
-              (handler {:type      :input
-                        :key       (if (= \return x) \newline x)
-                        :codepoint (long x)})
-              (recur (next xs)))))))))
-
-(defn request-screen-size [^OutputStream out]
-  (let [csi (fn [& args]
-              (let [^String code (apply str ESC "[" args)]
-                (.write out (.getBytes code))))
-        buffer (byte-array 1024)]
-    (csi "s") ;; save cursor position
-    (csi "5000;5000H")
-    (csi "6n")
-    (csi "u"))) ;; save cursor position
-
 (defn ^VirtualScreen virtual-screen [rows cols]
   (map->VirtualScreen {:pos [0 0]
                        :size [cols rows]
@@ -365,19 +329,164 @@
                    (when new-next? (.next new-row-it)))
             (assoc new :styles styles)))))))
 
-(defn start-input-loop [{:keys [in listeners]}]
-  (future
-    (let [running? (atom true)]
-      (while @running?
-        (try
-          (handle-input in
-                        (fn [event]
-                          (run! #(% event) (vals @listeners))))
-          (catch Throwable t
-            (println "Exception in input loop" t)
-            (Thread/sleep 1000))
-          (catch IOException e
-            (reset! running? false)))))))
+(defn parse-screen-size [csi]
+  (when csi
+    (when-let [[_ row col] (re-find #"(\d+);(\d+)R" csi)]
+      [(Integer/parseInt row) (Integer/parseInt col)])))
+
+(defn ^CharsetDecoder charset-decoder
+  ([]
+   (charset-decoder "UTF-8"))
+  ([encoding]
+   (-> (Charset/forName encoding)
+       .newDecoder
+       (.onMalformedInput CodingErrorAction/IGNORE)
+       (.onUnmappableCharacter CodingErrorAction/IGNORE))))
+
+(defn char-in-range? [min ch max]
+  (<= (long min) (long ch) (long max)))
+
+(defn input-consumer-loop [^InputStream in handler]
+  (let [buf-size 8192
+        buffer   (byte-array buf-size)
+        buffer'  (byte-array buf-size)
+        decoder  (charset-decoder)]
+    (try
+      (loop [state {}]
+        #_(prn state)
+        (let [{:keys [^CharBuffer char-buf]} state]
+          (if (or (nil? char-buf) (not (.hasRemaining char-buf)))
+            ;; Fill byte buffer, pull out telnet codes, decode to char buffer
+            (let [end (.read in buffer 0 buf-size)
+
+                  {:keys [dest-end commands]}
+                  (telnet/filter-commands {:src buffer :dest buffer' :end end})
+
+                  ^CharacterBuffer char-buf (.decode decoder (ByteBuffer/wrap buffer' 0 dest-end))]
+              (run! #(handler {:type :telnet :command %}) commands)
+              (recur {:char-buf char-buf}))
+
+            ;; handle next character
+            (let [ch (char (.get char-buf))
+                  ansi-state (:ansi-state state)]
+              (cond
+                ;; The ESC [ is followed by any number (including none) of "parameter bytes" in
+                ;; the range 0x30–0x3F (ASCII 0–9:;<=>?), then by any number of "intermediate
+                ;; bytes" in the range 0x20–0x2F (ASCII space and !"#$%&'()*+,-./), then finally
+                ;; by a single "final byte" in the range 0x40–0x7E (ASCII @A–Z[\]^_`a–z{|}~).
+                (= ch (char ESC))
+                (if (.hasRemaining char-buf)
+                  (recur (assoc state
+                                :ansi-state :init
+                                :ansi-command []))
+                  (do
+                    (handler {:type :input :char ch})
+                    (recur state)))
+
+                (and (= :init ansi-state) (= \[ ch))
+                (recur (-> state
+                           (assoc :ansi-state :param-bytes)
+                           (update :ansi-command conj ch)))
+
+                (and (= :init ansi-state) (= \O ch))
+                (recur (-> (assoc state :ansi-state :fn-key)
+                           (update :ansi-command conj ch)))
+
+                (and (= :param-bytes ansi-state) (char-in-range? \0 ch \?))
+                (recur (update state :ansi-command conj ch))
+
+                (and (#{:param-bytes :interm-bytes} ansi-state) (char-in-range? \space ch \/))
+                (recur (-> (assoc state :ansi-state :interm-bytes)
+                           (update :ansi-command conj ch)))
+
+                (and (#{:param-bytes :interm-bytes :fn-key} ansi-state) (char-in-range? \@ ch \~))
+                (do
+                  (handler {:type :ansi :command (String. (chars (into-array Character/TYPE (conj (:ansi-command state) ch))))})
+                  (recur (dissoc state :ansi-state :ansi-command)))
+
+                :else
+                (do
+                  (handler {:type :input :char ch})
+                  (recur (dissoc state :ansi-state :ansi-command))))))))
+      (catch IOException e
+        (println "Input loop closed" e))
+      (catch Exception e
+        (println "Input loop broken" e)))))
+
+(def ansi-key-commands
+  {"" :esc
+   "[A" :up
+   "[B" :down
+   "[C" :right
+   "[D" :left
+   "[H" :home
+   "[E" :end
+   "[2~" :insert
+   "[3~" :delete
+   "OP" :f1
+   "OQ" :f2
+   "OR" :f3
+   "OS" :f4
+   "[15~" :f5
+   "[17~" :f6
+   "[18~" :f7
+   "[19~" :f8
+   "[20~" :f9
+   "[21~" :f10
+   "[23~" :f11
+   "[24~" :f12})
+
+(defn char->key [ch]
+  (cond
+    (char-in-range? 0 ch 31)
+    (keyword (str "ctrl-" (char (+ (long ch) 64))))
+
+    (char-in-range? 32 ch 126)
+    (keyword (str ch))
+
+    (= ch \u007F)
+    :backspace
+
+    :else
+    nil))
+
+(defn listener-handler [{:keys [listeners]}]
+  (fn [{:keys [type command char] :as msg}]
+    #_(prn msg)
+    (let [emit #(run! (fn [l] (l %)) (vals @listeners))]
+      (case type
+        :telnet
+        nil
+
+        :ansi
+        (if-let [screen-size (parse-screen-size command)]
+          (emit {:type :screen-size
+                 :screen-size screen-size})
+          (if-let [key (get ansi-key-commands command)]
+            (emit {:type :input
+                   :key key})
+            )
+          )
+
+        :input
+        (emit (assoc msg :key (char->key (:char msg))))
+        ))))
+
+(defn start-input-loop [{:keys [^InputStream in] :as client}]
+  (assoc client
+         :input-loop
+         (future
+           (input-consumer-loop in (listener-handler client)))))
+
+(defn request-screen-size [^OutputStream out]
+  (let [csi (fn [& args]
+              (let [^String code (apply str ESC "[" args)]
+                (.write out (.getBytes code))))
+        buffer (byte-array 1024)]
+    (csi "s") ;; save cursor position
+    (csi "5000;5000H")
+    (csi "6n")
+    (csi "u")))
 
 (def CSI-ALTERNATE-SCREEN (str ESC "[?1049h"))
 (def CSI-REGULAR-SCREEN   (str ESC "[?1049l"))
@@ -406,6 +515,10 @@
       (.close socket))
     (catch IOException _)))
 
+(defn add-shutdown-hook [^clojure.lang.IFn f]
+  (.addShutdownHook (java.lang.Runtime/getRuntime)
+                    (Thread. f)))
+
 (defn make-client [in out & [socket]]
   (let [size (atom nil)
         client {:socket    socket
@@ -418,8 +531,9 @@
                                               (when (not= s @size)
                                                 (reset! size s))))})}]
     (start-client client)
-    (start-input-loop client)
-    client))
+    (let [client (start-input-loop client)]
+      (add-shutdown-hook #(stop-client client))
+      client)))
 
 (defn ^"[Ljava.lang.String;" string-array [args]
   (into-array String args))
@@ -432,10 +546,9 @@
 (defn stdio-client []
   (exec-stty "-echo" "-icanon")
   (let [client (make-client System/in System/out)]
-    (.addShutdownHook (java.lang.Runtime/getRuntime)
-                      (Thread. (fn []
-                                 (stop-client client)
-                                 (exec-stty "+echo" "+icanon"))))
+    (add-shutdown-hook (fn []
+                         (stop-client client)
+                         (exec-stty "+echo" "+icanon")))
     client))
 
 (defn add-listener [client key listener]
@@ -470,8 +583,11 @@
              (swap! clients conj client)
              (client-handler client)
              (recur (telnet/accept-connection server))))
+         (catch IOException _
+           ;; socket closed
+           )
          (catch Throwable t
-           (println "Exception in server loop" (str (class t))))))
+           (println "Exception in server loop" t))))
      stop!)))
 
 (defn- render* [{:keys [^VirtualScreen screen ^OutputStream out] :as client} element size]
