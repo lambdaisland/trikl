@@ -1,14 +1,18 @@
 (ns trikl.core
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.java.shell :as shell]
             [trikl.telnet :as telnet])
   (:import clojure.lang.PersistentVector
            java.util.Iterator
            java.lang.ProcessBuilder$Redirect
+           sun.misc.Signal
+           sun.misc.SignalHandler
            [java.io InputStream OutputStream IOException]
            [java.net ServerSocket Socket]
            [java.nio.charset CharsetDecoder Charset CodingErrorAction]
-           [java.nio ByteBuffer CharBuffer]))
+           [java.nio ByteBuffer CharBuffer]
+           java.io.StringWriter))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* true #_:warn-on-boxed)
@@ -19,7 +23,6 @@
      (println ex "Uncaught exception on" (.getName thread)))))
 
 (def ESC \u001b)
-(def RESET (str ESC "[m"))
 (def CSI_PATTERN #"\x1b\[[\x30-x3F]*[\x20-\x2F]*[\x40-\x7E]")
 
 (defrecord Charel [char fg bg])
@@ -110,6 +113,9 @@
             screen
             line)))
 
+(defmethod draw nil [_ screen]
+  screen)
+
 (defmethod draw java.util.List [els screen]
   (reduce #(draw %2 %1) screen els))
 
@@ -117,12 +123,16 @@
   (let [[f attrs children] (split-el el)]
     (draw (f attrs children) screen)))
 
+(defmethod draw clojure.lang.Var [el screen]
+  (let [[f attrs children] (split-el el)]
+    (draw (f attrs children) screen)))
+
 (defn apply-bounding-box [attrs screen]
   (let [[^long vx ^long vy ^long vw ^long vh] (:bounding-box screen)
         {:keys [^long x ^long y ^long width ^long height styles]
          :or {x 0 y 0 width vw height vh}} attrs
-        x (min (+ x vx) (+ vx vw))
-        y (min (+ y vy) (+ vy vh))
+        x (max 0 (min (+ x vx) (+ vx vw)))
+        y (max 0 (min (+ y vy) (+ vy vh)))
         width (min width (- vw x))
         height (min height (- vh y))]
     [x y width height]))
@@ -409,9 +419,10 @@
                   (handler {:type :input :char ch})
                   (recur (dissoc state :ansi-state :ansi-command))))))))
       (catch IOException e
-        (println "Input loop closed" e))
+        (println "Input loop closed")
+        :done)
       (catch Exception e
-        (println "Input loop broken" e)))))
+        (println "Error during input loop" e)))))
 
 (def ansi-key-commands
   {"" :esc
@@ -438,10 +449,16 @@
 
 (defn char->key [ch]
   (cond
+    (= 27 (long ch))
+    :escape
+
+    (= 32 (long ch))
+    :space
+
     (char-in-range? 0 ch 31)
     (keyword (str "ctrl-" (char (+ (long ch) 64))))
 
-    (char-in-range? 32 ch 126)
+    (char-in-range? 33 ch 126)
     (keyword (str ch))
 
     (= ch \u007F)
@@ -453,10 +470,19 @@
 (defn listener-handler [{:keys [listeners]}]
   (fn [{:keys [type command char] :as msg}]
     #_(prn msg)
-    (let [emit #(run! (fn [l] (l %)) (vals @listeners))]
+    (let [emit (fn [message]
+                 #_(prn message)
+                 (let [m (assoc message :time (System/currentTimeMillis))]
+                   (run! (fn [l] (l m))
+                         (vals @listeners))))]
       (case type
         :telnet
-        nil
+        (when (= (take 3 command) [:IAC :SUBNEGOTIATION :NAWS])
+          (let [raw-msg (:telnet/raw (meta command))
+                [_ _ _ _ cols _ rows] raw-msg]
+            (when (and (int? cols) (int? rows))
+              (emit {:type :screen-size
+                     :screen-size [rows cols]}))))
 
         :ansi
         (if-let [screen-size (parse-screen-size command)]
@@ -464,19 +490,18 @@
                  :screen-size screen-size})
           (if-let [key (get ansi-key-commands command)]
             (emit {:type :input
-                   :key key})
-            )
-          )
+                   :key key})))
 
         :input
-        (emit (assoc msg :key (char->key (:char msg))))
-        ))))
+        (emit (assoc msg :key (char->key (:char msg))))))))
 
 (defn start-input-loop [{:keys [^InputStream in] :as client}]
   (assoc client
          :input-loop
          (future
-           (input-consumer-loop in (listener-handler client)))))
+           (loop [result (input-consumer-loop in (listener-handler client))]
+             (when-not (= :done result)
+               (recur (input-consumer-loop in (listener-handler client))))))))
 
 (defn request-screen-size [^OutputStream out]
   (let [csi (fn [& args]
@@ -528,8 +553,7 @@
                 :screen    (atom nil)
                 :listeners (atom {:resize (fn [e]
                                             (when-let [s (:screen-size e)]
-                                              (when (not= s @size)
-                                                (reset! size s))))})}]
+                                              (reset! size (with-meta s {:trikl/message e}))))})}]
     (start-client client)
     (let [client (start-input-loop client)]
       (add-shutdown-hook #(stop-client client))
@@ -539,9 +563,21 @@
   (into-array String args))
 
 (defn exec-stty [& args]
-  (doto (ProcessBuilder. (string-array (cons "stty" args)))
-    (.redirectInput (ProcessBuilder$Redirect/from (io/file "/dev/tty")))
-    (.start)))
+  (let [^Process
+        process (-> (ProcessBuilder. (string-array (cons "stty" args)))
+                    (.redirectInput (ProcessBuilder$Redirect/from (io/file "/dev/tty")))
+                    (.start))
+
+        ^StringWriter err (StringWriter.)]
+    {:exit (.waitFor process)
+     :err @(future
+             (with-open [^StringWriter err (StringWriter.)]
+               (io/copy (.getErrorStream process) err)
+               (.toString err)))
+     :out @(future
+             (with-open [^StringWriter out (StringWriter.)]
+               (io/copy (.getInputStream process) out)
+               (.toString out)))}))
 
 (defn stdio-client []
   (exec-stty "-echo" "-icanon")
@@ -549,6 +585,15 @@
     (add-shutdown-hook (fn []
                          (stop-client client)
                          (exec-stty "+echo" "+icanon")))
+    (Signal/handle (Signal. "WINCH")
+                   (reify SignalHandler
+                     (^void handle [this ^Signal s]
+                      (let [out (:out (exec-stty "size"))]
+                        (when-let [[_ rows cols] (re-find #"(\d+) (\d+)" out)]
+                          (run! #(% (with-meta {:type :screen-size
+                                                :screen-size [(Long/parseLong rows) (Long/parseLong cols)]}
+                                      {:trikl/source :SIGWINCH}))
+                                (vals @(:listeners client))))))))
     client))
 
 (defn add-listener [client key listener]
@@ -590,31 +635,25 @@
            (println "Exception in server loop" t))))
      stop!)))
 
-(defn- render* [{:keys [^VirtualScreen screen ^OutputStream out] :as client} element size]
-  (binding [*screen-size*  size
-            *bounding-box* (into [0 0] size)]
-    (let [sb           (StringBuilder.)
-          empty-screen (apply virtual-screen size)
-          prev-screen  (if (= (:size screen) size)
-                         (or @screen empty-screen)
-                         (do
-                           (.append sb CSI-CLEAR-SCREEN)
-                           empty-screen))
-          next-screen  (draw element empty-screen)
-          new-screen   (diff-screen sb prev-screen next-screen)
-          commands     (str sb)]
-      (.write out (.getBytes commands))
-      (reset! screen new-screen))))
-
-(defn render [{:keys [size screen out] :as client} element]
-  (let [lkey (keyword (str (gensym "render")))]
-    (add-listener client
-                  lkey
-                  (fn [e]
-                    (remove-listener client lkey)
-                    (when-let [s (:screen-size e)]
-                      (render* client element s)))))
-  (request-screen-size out)
+(defn render [{:keys [^VirtualScreen screen ^OutputStream out size] :as client} element]
+  (let [size @size]
+    (assert (= 2 (count size)))
+    (binding [*screen-size*  size
+              *bounding-box* (into [0 0] size)]
+      (let [sb           (StringBuilder. ^String CSI-RESET-STYLES)
+            prev-screen  @screen
+            styles       (:styles prev-screen)
+            empty-screen (apply virtual-screen size)
+            prev-screen  (if (= (:size prev-screen) size)
+                           (or prev-screen empty-screen)
+                           (do
+                             (.append sb CSI-CLEAR-SCREEN)
+                             empty-screen))
+            next-screen  (draw element empty-screen)
+            new-screen   (diff-screen sb prev-screen next-screen)
+            commands     (str sb)]
+        (.write out (.getBytes commands))
+        (reset! screen new-screen))))
   nil)
 
 (defn force-render [client element]

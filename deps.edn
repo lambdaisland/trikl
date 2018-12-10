@@ -1,10 +1,10 @@
 {:paths ["src" "test" "resources"]
- :deps  {org.clojure/clojure {:mvn/version "1.10.0-beta5"}}
+ :deps  {org.clojure/clojure {:mvn/version "1.10.0-RC4"}}
 
  :aliases
  {:dev
   {}
 
   :test
-  {:extra-deps {lambdaisland/kaocha {:mvn/version "0.0-266"}
+  {:extra-deps {lambdaisland/kaocha {:mvn/version "0.0-305"}
                 lambdaisland/ansi   {:mvn/version "RELEASE"}}}}}

@@ -21,10 +21,12 @@
    :DONT               0xfe
    :IAC                0xff
 
-   :TRANSMIT_BINARY 0x00
-   :ECHO            0x01
-   :NAWS            0x1f
-   :LINEMODE        0x22})
+   :TRANSMIT_BINARY   0x00
+   :ECHO              0x01
+   :RECONNECTION      0x02
+   :SUPPRESS_GO_AHEAD 0x03
+   :NAWS              0x1f
+   :LINEMODE          0x22})
 
 (defn send-telnet-command [^java.net.SocketOutputStream out & args]
   (->> args
@@ -40,14 +42,13 @@
                        (byte 1) (byte 0)
                        :IAC :SUBNEGOTIATION_END
                        :IAC :WILL :ECHO
-                       ;;:IAC :DO :NAWS
-                       ))
+                       :IAC :DO :NAWS))
 
 (defn filter-commands
   "Copy buffer `src` to `dest`, filtering out any Telnet protocol commands along
   the way. These are returned separately."
   [{:keys [^bytes src ^bytes dest ^long end]}]
-  (prn (take end (seq src)))
+  #_(prn (take end (seq src)))
   (let [IAC          (unchecked-byte (TELNET :IAC))
         subneg-start (unchecked-byte (TELNET :SUBNEGOTIATION))
         subneg-end   (unchecked-byte (TELNET :SUBNEGOTIATION_END))
@@ -97,7 +98,7 @@
               (let [command (conj cmd b)]
                 (recur (-> state
                            (assoc :src-pos (inc src-pos))
-                           (dissoc :cmd :cmd?)
+                           (dissoc :cmd :cmd? :subneg?)
                            (update :commands
                                    conj (with-meta
                                           (mapv #(cmd->kw % (byte->long %)) command)
