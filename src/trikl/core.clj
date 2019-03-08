@@ -228,7 +228,7 @@
         total              (apply + (keep (fn [[w r]]
                                             (when (nil? w) r))
                                           (map vector widths ratios)))]
-    (assert (= (count children) (count ratios) (count widths)))
+    #_(assert (= (count children) (count ratios) (count widths)))
     (binding [*bounding-box* bbox]
       (let [children (reduce (fn [res [c w r]]
                                (let [x  (apply + (map #(get-in % [1 :width]) res))
@@ -258,7 +258,7 @@
         ^long total                                (apply + (keep (fn [[w r]]
                                                                     (when (nil? w) r))
                                                                   (map vector heights ratios)))]
-    (assert (= (count children) (count ratios) (count heights)))
+    #_(assert (= (count children) (count ratios) (count heights)))
     (binding [*bounding-box* bbox]
       (let [children (reduce (fn [res [c w r]]
                                (let [y  (apply + (map #(get-in % [1 :height]) res))
@@ -461,6 +461,9 @@
 
     (= 32 (long ch))
     :space
+
+    (= \return ch)
+    :return
 
     (char-in-range? 0 ch 31)
     (keyword (str "ctrl-" (char (+ (long ch) 64))))
