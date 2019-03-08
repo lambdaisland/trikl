@@ -98,6 +98,9 @@
                      (type (first element)))
                    (type element))))
 
+(defmethod draw :default [o screen]
+  (draw (str o) screen))
+
 (defn draw-line [line screen]
   (let [[x y] (:pos screen)
         [^long min-x ^long min-y ^long max-x ^long max-y] (:bounding-box screen)
