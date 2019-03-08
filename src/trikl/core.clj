@@ -126,6 +126,10 @@
   (let [[f attrs children] (split-el el)]
     (draw (f attrs children) screen)))
 
+(defmethod draw clojure.lang.MultiFn [el screen]
+  (let [[f attrs children] (split-el el)]
+    (draw (f attrs children) screen)))
+
 (defmethod draw clojure.lang.Var [el screen]
   (let [[f attrs children] (split-el el)]
     (draw (f attrs children) screen)))
