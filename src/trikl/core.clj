@@ -105,13 +105,13 @@
   (let [[x y] (:pos screen)
         [^long min-x ^long min-y ^long max-x ^long max-y] (:bounding-box screen)
         line (remove #{\return} ;; don't want no carriage returns
-                     (subs line 0 (max 0 (min (count line) (- max-x x)))))]
+                     (subs line 0 (max 0 (min (count line) (- max-x x)))))
+        styles (:styles screen)]
     (reduce (fn [screen char]
               (-> screen
                   (update-in [:charels (row screen) (col screen)]
-                             #(-> %
-                                  (assoc :char char)
-                                  (merge (:styles screen))))
+                             (fn [^Charel ch]
+                               (->Charel char (:fg styles (:fg ch)) (:bg styles (:bg ch)))))
                   (update-col inc)))
             screen
             line)))
