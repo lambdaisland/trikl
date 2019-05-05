@@ -20,7 +20,16 @@
   (let [binding-pairs (partition 2 bindings)]
     (reduce-for* binding-pairs init body)))
 
+(def pal
+  "Partial-left (same as clojure.core/partial)"
+  partial)
+
+(defn par
+  "Partial-right, partially apply rightmost function arguments."
+  [f & xs]
+  (fn [& ys]
+    (apply f (concat ys xs))))
 (comment
   (reduce-for [] [x (range 3)
                   y (range 3)]
-    (conj % [x y])))
+              (conj % [x y])))

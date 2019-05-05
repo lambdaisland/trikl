@@ -26,7 +26,29 @@
 (def CSI_PATTERN #"\x1b\[[\x30-x3F]*[\x20-\x2F]*[\x40-\x7E]")
 
 (defrecord Charel [char fg bg])
-(defrecord VirtualScreen [pos size bounding-box styles stack ^PersistentVector charels])
+
+;; This is the state that gets passed all around during the draw step, and from
+;; one render phase to the next. It contains everything an element needs to know
+;; to draw itself.
+(defrecord VirtualScreen [;; current drawing position
+                          pos
+
+                          ;; Screen size (atom)
+                          size
+
+                          ;; [x y width height], an element should not draw
+                          ;; outside its bounding box
+                          bounding-box
+                          styles
+                          stack
+                          ^PersistentVector charels
+
+                          ;; registry of elements by id
+                          elements
+                          elements'
+
+                          ;; element that currently has focus
+                          focus])
 
 (def BLANK (map->Charel {:char \space}))
 
@@ -91,6 +113,11 @@
           [tag fst (rest rst)]
           [tag {} (or rst ())])))))
 
+(defn register [screen [_ {id :id} :as el]]
+  (if id
+    (assoc-in screen [:elements' id] el)
+    screen))
+
 (defmulti draw (fn [element screen]
                  (if (vector? element)
                    (if (keyword? (first element))
@@ -123,8 +150,25 @@
   (reduce #(draw %2 %1) screen els))
 
 (defmethod draw clojure.lang.Fn [el screen]
-  (let [[f attrs children] (split-el el)]
-    (draw (f attrs children) screen)))
+  (let [[f {id :id :as attrs} children] (split-el el)
+        prev-el (and id (get-in screen [:elements id]))
+        ;; auto-focus first focusable
+        screen (if (and id (nil? (:focus screen)) (:focusable? attrs))
+                 (assoc screen :focus id)
+                 screen)
+        focused? (and id (= id (:focus screen)))
+        attrs (if focused?
+                (assoc attrs :focused? true)
+                (dissoc attrs :focused?))]
+    (if (and prev-el (:stateful? (second prev-el)))
+      (draw ((first prev-el) attrs children)
+            (register screen prev-el))
+
+      (let [expanded (f attrs children)]
+        (if (instance? clojure.lang.Fn expanded)
+          (draw (expanded attrs children)
+                (register screen [expanded (assoc attrs :stateful? true) children]))
+          (draw expanded (register screen expanded)))))))
 
 (defmethod draw clojure.lang.MultiFn [el screen]
   (let [[f attrs children] (split-el el)]
@@ -145,29 +189,33 @@
     [x y width height]))
 
 (defmethod draw :box [el screen]
-  (let [[_ attrs children] (split-el el)
-        [x y width height :as bbox] (apply-bounding-box attrs screen)
-        styles (:styles attrs)
-        coords (for [col (range x (+ x width))
-                     row (range y (+ y height))]
-                 [row col])
-        screen' (-> screen
-                    (push-styles styles)
-                    (assoc :pos [x y]
-                           :bounding-box [x y (+ x width) (+ y height)])
-                    (update :charels
-                            (fn [charels]
-                              (reduce #(update-in %1 %2 merge styles)
-                                      charels
-                                      coords))))]
-    (binding [*bounding-box* bbox]
-      (-> (reduce #(draw %2 %1) screen' children)
-          (assoc :pos (:pos screen)
-                 :bounding-box (:bounding-box screen))
-          (pop-styles)))))
+  (let [[_ attrs children :as el] (split-el el)
+        [x y width height :as bbox] (apply-bounding-box attrs screen)]
+    (if (or (< width 0) (< height 0))
+      screen
+      (let [screen (register screen el)
+            styles (:styles attrs)
+            coords (for [col (range x (+ x width))
+                         row (range y (+ y height))]
+                     [row col])
+            screen' (-> screen
+                        (push-styles styles)
+                        (assoc :pos [x y]
+                               :bounding-box [x y (+ x width) (+ y height)])
+                        (update :charels
+                                (fn [charels]
+                                  (reduce #(update-in %1 %2 merge styles)
+                                          charels
+                                          coords))))]
+        (binding [*bounding-box* bbox]
+          (-> (reduce #(draw %2 %1) screen' children)
+              (assoc :pos (:pos screen)
+                     :bounding-box (:bounding-box screen))
+              (pop-styles)))))))
 
 (defmethod draw :span [el screen]
-  (let [[_ attrs children] (split-el el)
+  (let [[_ attrs children :as el] (split-el el)
+        screen (register screen el)
         {:keys [styles]} attrs
         screen' (push-styles screen styles)]
     (-> (reduce #(draw %2 %1) screen' children)
@@ -220,14 +268,15 @@
             screen))))
 
 (defmethod draw :cols [el screen]
-  (let [[_ attrs children] (split-el el)
+  (let [[_ attrs children :as el]   (split-el el)
+        screen                      (register screen el)
         [x y width height :as bbox] (apply-bounding-box attrs screen)
-        ratios             (:ratios attrs (repeat (count children) 1))
-        widths             (map #(:width (second (split-el %))) children)
-        remaining          (- width (apply + (remove nil? widths)))
-        total              (apply + (keep (fn [[w r]]
-                                            (when (nil? w) r))
-                                          (map vector widths ratios)))]
+        ratios                      (:ratios attrs (repeat (count children) 1))
+        widths                      (map #(:width (second (split-el %))) children)
+        remaining                   (- width (apply + (remove nil? widths)))
+        total                       (apply + (keep (fn [[w r]]
+                                                     (when (nil? w) r))
+                                                   (map vector widths ratios)))]
     #_(assert (= (count children) (count ratios) (count widths)))
     (binding [*bounding-box* bbox]
       (let [children (reduce (fn [res [c w r]]
@@ -241,7 +290,7 @@
                                          (-> c
                                              (assoc-in [1 :x] x)
                                              (assoc-in [1 :width] ww))
-                                         [:box {:x x
+                                         [:box {:x     x
                                                 :width ww}
                                           c]))))
                              []
@@ -250,14 +299,15 @@
              (reduce (fn [s ch] (draw ch s)) screen))))))
 
 (defmethod draw :rows [el screen]
-  (let [[_ attrs children]                         (split-el el)
+  (let [[_ attrs children :as el]                           (split-el el)
+        screen                                              (register screen el)
         [^long x ^long y ^long width ^long height :as bbox] (apply-bounding-box attrs screen)
-        ratios                                     (:ratios attrs (repeat (count children) 1))
-        heights                                    (map #(:height (second (split-el %))) children)
-        ^long remaining                            (- height (apply + (remove nil? heights)))
-        ^long total                                (apply + (keep (fn [[w r]]
-                                                                    (when (nil? w) r))
-                                                                  (map vector heights ratios)))]
+        ratios                                              (:ratios attrs (repeat (count children) 1))
+        heights                                             (map #(:height (second (split-el %))) children)
+        ^long remaining                                     (- height (apply + (remove nil? heights)))
+        ^long total                                         (apply + (keep (fn [[w r]]
+                                                                             (when (nil? w) r))
+                                                                           (map vector heights ratios)))]
     #_(assert (= (count children) (count ratios) (count heights)))
     (binding [*bounding-box* bbox]
       (let [children (reduce (fn [res [c w r]]
@@ -279,13 +329,16 @@
         (->> children
              (reduce (fn [s ch] (draw ch s)) screen))))))
 
-(defn ^VirtualScreen virtual-screen [rows cols]
+(defn ^VirtualScreen virtual-screen [cols rows]
   (map->VirtualScreen {:pos [0 0]
                        :size [cols rows]
                        :bounding-box [0 0 cols rows]
                        :styles {:fg nil :bg nil}
                        :stack []
-                       :charels (vec (repeat rows (vec (repeat cols BLANK))))}))
+                       :charels (vec (repeat rows (vec (repeat cols BLANK))))
+                       :elements {}
+                       :elements' {}
+                       :focus nil}))
 
 (def NULL_ITERATOR
   (reify java.util.Iterator
@@ -349,7 +402,7 @@
 (defn parse-screen-size [csi]
   (when csi
     (when-let [[_ row col] (re-find #"(\d+);(\d+)R" csi)]
-      [(Integer/parseInt row) (Integer/parseInt col)])))
+      [(Integer/parseInt col) (Integer/parseInt row)])))
 
 (defn ^CharsetDecoder charset-decoder
   ([]
@@ -477,30 +530,37 @@
     :else
     nil))
 
-(defn listener-handler [{:keys [listeners]}]
+(defn listener-handler [{:keys [listeners] :as client}]
   (fn [{:keys [type command char] :as msg}]
     #_(prn msg)
     (let [emit (fn [message]
                  #_(prn message)
                  (let [m (assoc message :time (System/currentTimeMillis))]
-                   (run! (fn [l] (l m))
+                   (run! (fn [l] (l (vary-meta m assoc :trikl/client client)))
                          (vals @listeners))))]
       (case type
         :telnet
         (when (= (take 3 command) [:IAC :SUBNEGOTIATION :NAWS])
           (let [raw-msg (:telnet/raw (meta command))
-                [_ _ _ _ cols _ rows] raw-msg]
-            (when (and (int? cols) (int? rows))
-              (emit {:type :screen-size
-                     :screen-size [rows cols]}))))
+                [_ _ _ cx cols rx rows] raw-msg]
+            (when (and (int? cx) (int? rx) (int? cols) (int? rows))
+              (emit (with-meta
+                      {:type :screen-size
+                       :screen-size [(+ (* 256 cx) cols) (+ (* 256 rx) rows)]}
+                      {:telnet/command command
+                       :telnet/raw raw-msg})))))
 
         :ansi
         (if-let [screen-size (parse-screen-size command)]
-          (emit {:type :screen-size
-                 :screen-size screen-size})
+          (emit (with-meta
+                  {:type :screen-size
+                   :screen-size screen-size}
+                  {:trikl/command command}))
           (if-let [key (get ansi-key-commands command)]
-            (emit {:type :input
-                   :key key})))
+            (emit (with-meta
+                    {:type :input
+                     :key key}
+                    {:trikl/command command}))))
 
         :input
         (emit (assoc msg :key (char->key (:char msg))))))))
@@ -606,10 +666,23 @@
                                 (vals @(:listeners client))))))))
     client))
 
-(defn add-listener [client key listener]
+(defn add-listener
+  "Add an event listener to the client, identified with the given key.
+
+  The key must be unique, reusing a key will cause the listener to be replaced.
+  The key can be used to remove the listener with [[remove-listener]].
+
+  The listener is a function which takes a single argument, the event. The
+  client where the event originated from is available as :trikl/client on the
+  event's metadata."
+  [client key listener]
   (swap! (:listeners client) assoc key listener))
 
-(defn remove-listener [client key]
+(defn remove-listener
+  "Remove an event listener previously added with [[add-listener]].
+
+  This removes the listener that has the given identifying key."
+  [client key]
   (swap! (:listeners client) dissoc key))
 
 (defmacro time-info [expr desc]
@@ -622,13 +695,14 @@
   ([client-handler]
    (start-server client-handler 1357))
   ([client-handler port]
+   (start-server (atom []) client-handler port))
+  ([clients client-handler port]
    (let [^ServerSocket server (telnet/server-socket port)
-         clients (atom [])
-         stop!  (fn []
-                  (run! stop-client @clients)
-                  (try
-                    (.close server)
-                    (catch IOException _)))]
+         stop!                (fn []
+                                (run! stop-client @clients)
+                                (try
+                                  (.close server)
+                                  (catch IOException _)))]
      (future
        (try
          (loop [^Socket client-sock (telnet/accept-connection server)]
@@ -643,28 +717,48 @@
            )
          (catch Throwable t
            (println "Exception in server loop" t))))
-     stop!)))
+     {:clients clients
+      :stop-fn stop!})))
+
+(defn stop-server [{stop-fn :stop-fn}]
+  (stop-fn))
 
 (defn render [{:keys [^VirtualScreen screen ^OutputStream out size] :as client} element]
   (let [size @size]
-    (assert (= 2 (count size)))
-    (binding [*screen-size*  size
-              *bounding-box* (into [0 0] size)]
-      (let [sb           (StringBuilder. ^String CSI-RESET-STYLES)
-            prev-screen  @screen
-            styles       (:styles prev-screen)
-            empty-screen (apply virtual-screen size)
-            prev-screen  (if (= (:size prev-screen) size)
-                           (or prev-screen empty-screen)
-                           (do
-                             (.append sb CSI-CLEAR-SCREEN)
-                             empty-screen))
-            next-screen  (draw element empty-screen)
-            new-screen   (diff-screen sb prev-screen next-screen)
-            commands     (str sb)]
-        (.write out (.getBytes commands))
-        (reset! screen new-screen))))
+    (when (= 2 (count size))
+      (binding [*screen-size*  size
+                *bounding-box* (into [0 0] size)]
+        (let [sb           (StringBuilder.)
+              prev-screen  (assoc-in @screen [:elements' ::root] element)
+              styles       (:styles prev-screen)
+              elements     (:elements' prev-screen)
+              focus        (:focus prev-screen)
+              empty-screen (apply virtual-screen size)
+              prev-screen  (if (= (:size prev-screen) size)
+                             (or prev-screen empty-screen)
+                             (do
+                               (.append sb CSI-RESET-STYLES)
+                               (.append sb CSI-CLEAR-SCREEN)
+                               empty-screen))
+              empty-screen (assoc empty-screen
+                                  :elements elements
+                                  :elements' {}
+                                  :focus focus)
+              next-screen  (draw element empty-screen)
+              new-screen   (diff-screen sb prev-screen next-screen)
+              commands     (str sb)]
+          (.write out (.getBytes commands))
+          (reset! screen new-screen)))))
   nil)
+
+(defn rerender! [client]
+  (let [screen @(:screen client)]
+    (if-let [root (get-in screen [:elements :trikl.core/root])]
+      (render client root)
+      (println "Re-render can't find root element, did you do a regular render first?"))))
+
+(defn focus! [client id]
+  (swap! (:screen client) assoc :focus id))
 
 (defn force-render [client element]
   (reset! (:screen client) (apply virtual-screen @(:size client)))
