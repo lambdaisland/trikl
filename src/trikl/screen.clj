@@ -19,6 +19,11 @@
 (defn charel-matrix [height width]
   (vec (repeat height (vec (repeat width BLANK)))))
 
+(defn new-screen [height width]
+  {:styles  {}
+   :size    [height width]
+   :charels (charel-matrix height width)})
+
 (def NULL_ITERATOR
   (reify Iterator
     (hasNext [_] false)
@@ -107,6 +112,24 @@
                    (when old-next? (.next old-row-it))
                    (when new-next? (.next new-row-it)))
             styles))))))
+
+(defn blank-bounding-box [charels {:keys [^long x ^long y ^long width ^long height]}]
+  (let [max-y    (count charels)
+        max-x    (count (first charels))
+        row-idxs (range (min max-y y)
+                        (min max-y (+ y height)))
+        col-idxs (range (min max-x x)
+                        (min max-x (+ x height)))]
+    (reduce (fn [charels y]
+              (update charels y
+                      (fn [row]
+                        (reduce (fn [row x]
+                                  (assoc row x BLANK))
+                                row
+                                col-idxs))))
+            charels
+            row-idxs)))
+
 
 #_
 (let [r (->Charel \r [255 0 0] nil)

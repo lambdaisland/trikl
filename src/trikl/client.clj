@@ -7,7 +7,8 @@
   This namespace also contains most of the input handling and parsing, which
   could potentially be split out."
   (:require [clojure.java.io :as io]
-            [trikl.telnet :as telnet])
+            [trikl.telnet :as telnet]
+            [trikl.tree :as tree])
   (:import [java.io InputStream IOException OutputStream StringWriter]
            [java.lang Integer ProcessBuilder$Redirect]
            [java.net ServerSocket Socket]
@@ -25,21 +26,70 @@
    ;; OutputStream for drawing
    :out       out
 
-   ;; Current screen size as queried from the client
-   :size      (atom [width height])
+   ;; Everything mutable
+   :state (atom {
+                 ;; Current screen size as queried from the client
+                 :size [height width]
 
-   ;; The VirtualScreen, i.e. a representation of the current terminal state.
-   :screen    (atom screen)
+                 ;; The VirtualScreen, i.e. a representation of the current terminal state.
+                 :screen screen
 
-   ;; Event listeners
-   :listeners (atom {:listener-key (fn [event])})})
+                 ;; The last rendered UI tree
+                 :ui-tree ui-tree
+
+                 ;; ID of the element that has focus
+                 :focus "foo"
+
+                 ;; Event listeners
+                 :listeners {:listener-key (fn [event])}})})
 
 (def ESC \u001b)
 
-(defn parse-screen-size [csi]
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; State
+
+(defn make-state
+  "Create an empty client state."
+  []
+  (atom {:ui-tree nil
+         :screen nil
+         :focus nil
+         :size nil
+         :listeners {}}))
+
+(defn add-listener
+  "Add an event listener to the client, identified with the given key.
+
+  The key must be unique, reusing a key will cause the listener to be replaced.
+  The key can be used to remove the listener with [[remove-listener]].
+
+  The listener is a function which takes a single argument, the event. The
+  client where the event originated from is available as :trikl/client on the
+  event's metadata."
+  [client key listener]
+  (swap! (:state client) assoc-in [:listeners key] listener)
+  client)
+
+(defn remove-listener
+  "Remove an event listener previously added with [[add-listener]].
+
+  This removes the listener that has the given identifying key."
+  [client key]
+  (swap! (:state client) update :listeners dissoc key)
+  client)
+
+(defn listeners
+  "Return all registered listener functions without keys."
+  [client]
+  (-> client :state deref :listeners vals))
+
+(defn parse-screen-size
+  "Given a screen size control sequence as sent from the client, like ESC[80;20R,
+  return [row-count column-count]"
+  [csi]
   (when csi
     (when-let [[_ row col] (re-find #"(\d+);(\d+)R" csi)]
-      [(Integer/parseInt col) (Integer/parseInt row)])))
+      [(Integer/parseInt row) (Integer/parseInt col)])))
 
 (defn ^CharsetDecoder charset-decoder
   ([]
@@ -53,7 +103,17 @@
 (defn char-in-range? [min ch max]
   (<= (long min) (long ch) (long max)))
 
-(defn input-consumer-loop [^InputStream in handler]
+(defn input-consumer-loop
+  "Consume the input stream coming from the terminal, handling terminal commands,
+  telnet commands, and regular key input.
+
+  The handler is called for each received event with a map of the form
+
+      {:type :input :char character}
+      {:type :telnet :command [telnet-command]}
+      {:type :ansi :command [ansi-command]}
+  "
+  [^InputStream in handler]
   (let [buf-size 8192
         buffer   (byte-array buf-size)
         buffer'  (byte-array buf-size)
@@ -84,8 +144,8 @@
                 (= ch (char ESC))
                 (if (.hasRemaining char-buf)
                   (recur (assoc state
-                                :ansi-state :init
-                                :ansi-command []))
+                           :ansi-state :init
+                           :ansi-command []))
                   (do
                     (handler {:type :input :char ch})
                     (recur state)))
@@ -117,9 +177,12 @@
                   (recur (dissoc state :ansi-state :ansi-command))))))))
       (catch IOException e
         (println "Input loop closed")
+        ;; Prevent the loop from restarting.
         :done)
       (catch Exception e
-        (println "Error during input loop" e)))))
+        (println "Error during input loop" e)
+        ;; Return nil, the loop will restart.
+        ))))
 
 (def ansi-key-commands
   {"" :esc
@@ -167,14 +230,23 @@
     :else
     nil))
 
-(defn listener-handler [{:keys [listeners] :as client}]
+(defn listener-handler
+  "Input loop handlers which converts events to more semantically meaningful
+  ones (:screen-size, :input), and propagates them to all listeners of the
+  client.
+
+  Messages are augmented with metadata, this allow you to find the client the
+  message came from (:trikl/client), the time the event was emitted (:time), and
+  the original source event (:telnet/command, :telnet/raw, :ansi/command)."
+  [client]
   (fn [{:keys [type command char] :as msg}]
     #_(prn msg)
     (let [emit (fn [message]
                  #_(prn message)
-                 (let [m (assoc message :time (System/currentTimeMillis))]
-                   (run! (fn [l] (l (vary-meta m assoc :trikl/client client)))
-                         (vals @listeners))))]
+                 (let [message (assoc message :time (System/currentTimeMillis))
+                       listeners (listeners client)]
+                   (run! (fn [l] (l (vary-meta message assoc :trikl/client client)))
+                         listeners)))]
       (case type
         :telnet
         (when (= (take 3 command) [:IAC :SUBNEGOTIATION :NAWS])
@@ -183,7 +255,7 @@
             (when (and (int? cx) (int? rx) (int? cols) (int? rows))
               (emit (with-meta
                       {:type :screen-size
-                       :screen-size [(+ (* 256 cx) cols) (+ (* 256 rx) rows)]}
+                       :screen-size [(+ (* 256 rx) rows) (+ (* 256 cx) cols)]}
                       {:telnet/command command
                        :telnet/raw raw-msg})))))
 
@@ -192,33 +264,40 @@
           (emit (with-meta
                   {:type :screen-size
                    :screen-size screen-size}
-                  {:trikl/command command}))
+                  {:ansi/command command}))
           (if-let [key (get ansi-key-commands command)]
             (emit (with-meta
                     {:type :input
                      :key key}
-                    {:trikl/command command}))))
+                    {:ansi/command command}))))
 
         :input
         (emit (assoc msg :key (char->key (:char msg))))))))
 
-(defn start-input-loop [{:keys [^InputStream in] :as client}]
+(defn start-input-loop
+  "Starts the input loop in a separate thread (future). The loop will keep running until "
+  [{:keys [^InputStream in] :as client}]
   (assoc client
-         :input-loop
-         (future
-           (loop [result (input-consumer-loop in (listener-handler client))]
-             (when-not (= :done result)
-               (recur (input-consumer-loop in (listener-handler client))))))))
+    :input-loop
+    (future
+      (loop [result (input-consumer-loop in (listener-handler client))]
+        ;; If this returns it means we got an exception that broke the loop. If
+        ;; this was an IOException then we'll assume the input stream was
+        ;; closed (i.e. the client went away or we shut it off), and we'll stop
+        ;; retrying. Other exceptions are more likely due to faulty event
+        ;; listeners. In these case we restart the input loop so events continue
+        ;; to be delivered.
+        (when-not (= :done result)
+          (recur (input-consumer-loop in (listener-handler client))))))))
 
 (defn request-screen-size [^OutputStream out]
   (let [csi (fn [& args]
               (let [^String code (apply str ESC "[" args)]
-                (.write out (.getBytes code))))
-        buffer (byte-array 1024)]
+                (.write out (.getBytes code)))) buffer (byte-array 1024)]
     (csi "s") ;; save cursor position
-    (csi "5000;5000H")
-    (csi "6n")
-    (csi "u")))
+    (csi "5000;5000H") ;; move to position outside of screen, this will actually move the cursor to the bottom right
+    (csi "6n") ;; ask the client to send us the position of the cursor
+    (csi "u"))) ;; restore cursor position
 
 (def CSI-ALTERNATE-SCREEN (str ESC "[?1049h"))
 (def CSI-REGULAR-SCREEN   (str ESC "[?1049l"))
@@ -228,7 +307,11 @@
 (def CSI-SHOW-CURSOR      (str ESC "[?25h"))
 (def CSI-HIDE-CURSOR      (str ESC "[?25l"))
 
-(defn start-client [{:keys [^OutputStream out] :as client}]
+(defn start-client
+  "Put the client's terminal in a good state: switch to alternate screen, clear
+  the screen, reset the styles, hide the cursor, then request the screen size so
+  we have a size to work with when we start rendering."
+  [{:keys [^OutputStream out] :as client}]
   (when (:socket client)
     (telnet/prep-telnet out))
   (.write out (.getBytes (str CSI-ALTERNATE-SCREEN
@@ -238,7 +321,10 @@
                               CSI-HIDE-CURSOR)))
   (request-screen-size out))
 
-(defn stop-client [{:keys [^OutputStream out ^Socket socket] :as client}]
+(defn stop-client
+  "Restore the terminal state, then close the client socket so the user gets their
+  terminal back."
+  [{:keys [^OutputStream out ^Socket socket] :as client}]
   (try
     (.write out (.getBytes (str CSI-REGULAR-SCREEN
                                 CSI-RESET-STYLES
@@ -251,17 +337,17 @@
   (.addShutdownHook (java.lang.Runtime/getRuntime)
                     (Thread. f)))
 
+(defn resize-listener [e]
+  (when-let [s (:screen-size e)]
+    (let [state (-> e meta :trikl/client :state)]
+      (swap! state assoc :size (with-meta s {:trikl/message e})))))
+
 (defn make-client [in out & [socket]]
-  (let [size (atom nil)
-        client {:socket    socket
-                :in        in
-                :out       out
-                :size      size
-                :ui-tree   (atom nil)
-                :screen    (atom nil)
-                :listeners (atom {:resize (fn [e]
-                                            (when-let [s (:screen-size e)]
-                                              (reset! size (with-meta s {:trikl/message e}))))})}]
+  (let [client (-> {:socket socket
+                    :in     in
+                    :out    out
+                    :state  (make-state)}
+                   (add-listener :resize resize-listener))]
     (start-client client)
     (let [client (start-input-loop client)]
       (add-shutdown-hook #(stop-client client))
@@ -304,32 +390,35 @@
                                 (vals @(:listeners client))))))))
     client))
 
-(defn add-listener
-  "Add an event listener to the client, identified with the given key.
-
-  The key must be unique, reusing a key will cause the listener to be replaced.
-  The key can be used to remove the listener with [[remove-listener]].
-
-  The listener is a function which takes a single argument, the event. The
-  client where the event originated from is available as :trikl/client on the
-  event's metadata."
-  [client key listener]
-  (swap! (:listeners client) assoc key listener))
-
-(defn remove-listener
-  "Remove an event listener previously added with [[add-listener]].
-
-  This removes the listener that has the given identifying key."
-  [client key]
-  (swap! (:listeners client) dissoc key))
-
 (defmacro time-info [expr desc]
   `(let [start# (System/nanoTime)
          ret# ~expr]
      (println (str ~desc ": " (/ (double (- (. System (nanoTime)) start#)) 1000000.0) " ms"))
      ret#))
 
+(defn parents-by-id [node id]
+  (if (= (:id node) id)
+    [node]
+    (some (fn [child]
+            (when-let [child (parents-by-id child id)]
+              (conj child node)))
+          (:children node))))
+
+(defn focus-dispatch-handler [e]
+  (let [client (:trikl/client (meta e))
+        {:keys [ui-tree focus] :as client-state} @(:state client)]
+    (when focus
+      (when-let [parent-chain (parents-by-id ui-tree focus)]
+        (when-let [node (some (fn [node]
+                                (when (get-in node [:widget :on-key])
+                                  node))
+                              parent-chain)]
+          (binding [tree/*component-state* (:state node)]
+            ((:on-key (:widget node)) e)))))))
+
 (defn start-server
+  ([]
+   (start-server identity))
   ([client-handler]
    (start-server client-handler 1357))
   ([client-handler port]
@@ -348,6 +437,7 @@
                                      (.getOutputStream client-sock)
                                      client-sock)]
              (swap! clients conj client)
+             (add-listener client ::focus-event-dispatch focus-dispatch-handler)
              (client-handler client)
              (recur (telnet/accept-connection server))))
          (catch IOException _

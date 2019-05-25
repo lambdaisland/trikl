@@ -42,19 +42,18 @@
 ;; Widget::
 ;; Encapsulates the behavior of a component, map with at a minimum a :render function
 
+(def ^:dynamic *atom-factory* nil)
 
-
-
-(defn new-context [width height]
+(defn new-context [height width]
   {:x 0
    :y 0
-   :width width
    :height height
+   :width width
 
    :min-x 0
    :min-y 0
-   :max-x width
-   :max-y height
+   :max-x (dec width)
+   :max-y (dec height)
 
    :styles {}})
 
@@ -98,22 +97,17 @@
       (clip-bounding-box props)
       (style-from-props props)))
 
-(defn node [type props]
-  {:type type
-   :props props})
-
-(defn markup->node [markup]
-  (if (string? markup)
-    markup
-    (node (markup-type markup)
-          (update (markup-props markup) :children (partial map markup->node)))))
+(def ^:dynamic *component-state* nil)
+(def ^:dynamic *node-path* [])
 
 (defn string-node [text]
   {:tag    :text
+   :path   *node-path*
    :markup text
    :text   (str/split text #"(\r\n|\r|\n)")})
 
-(def ^:dynamic *component-state* nil)
+(defn cstate []
+  *component-state*)
 
 (declare init)
 
@@ -121,19 +115,25 @@
   (let [widget (tag props)]
     (if (map? widget)
       (let [state (if-let [init-fn (:init-state widget)]
-                    (atom (init-fn props))
+                    (*atom-factory* (init-fn props))
                     nil)
             child (binding [*component-state* state]
                     ((:render widget) props))]
-        {:tag      tag
-         :props    props
-         :widget   widget
-         :state    *component-state*
-         :children [(init child)]})
+        {:tag        tag
+         :props      props
+         :id         (:id widget)
+         :path       *node-path*
+         :widget     widget
+         :prev-state @state
+         :state      state
+         :children   [(binding [*node-path* (conj *node-path* :children 0)]
+                        (init child))]})
       {:tag      tag
        :props    props
+       :path     *node-path*
        :widget   {:render tag}
-       :children [(init (tag props))]})))
+       :children [(binding [*node-path* (conj *node-path* :children 0)]
+                    (init (tag props)))]})))
 
 (defn make-node [markup]
   (let [tag   (first markup)
@@ -142,9 +142,22 @@
       (keyword? tag)
       {:tag      tag
        :props    props
-       :children (map init (:children props))}
+       :path     *node-path*
+       :children (into []
+                       (comp
+                        (map-indexed
+                         (fn [idx node]
+                           (binding [*node-path* (conj *node-path* :children idx)]
+                             (if (seq? node)
+                               (map init node)
+                               [(init node)]))))
+                        cat)
+                       (:children props))}
 
       (fn? tag)
+      (component-node tag props)
+
+      (var? tag)
       (component-node tag props)
 
       :else
@@ -191,17 +204,22 @@
           (update :children receive-child-markup (:children props))))))
 
 (defn receive-markup [node markup]
-  (if (string? markup)
-    (if (= markup (:markup node))
-      node
-      (string-node markup))
-    (let [tag   (first markup)
-          props (markup-props markup)]
-      (if (= tag (:tag node))
-        (if (= props (:props node))
-          node
-          (receive-props node props))
-        (make-node markup)))))
+  (binding [*node-path* (:path node)]
+    (if (string? markup)
+      (if (= markup (:markup node))
+        node
+        (string-node markup))
+      (let [tag   (first markup)
+            props (markup-props markup)
+            state (when (contains? node :state)
+                    @(:state node))
+            state-changed? (and state (not= state (:prev-state node)))]
+        (if (= tag (:tag node))
+          (if (and (= props (:props node)) (not state-changed?))
+            node
+            (assoc (receive-props node props)
+                   :prev-state state))
+          (make-node markup))))))
 
 (def layout nil)
 (def draw nil)
@@ -235,8 +253,8 @@
   (if (seq (:children node))
     (-> node
         (update :children
-                (partial map (fn [node]
-                               (layout node ctx))))
+                (partial mapv (fn [node]
+                                (layout node ctx))))
         fit-to-children)
     (assoc node
            :x (:x ctx) :y (:y ctx)
@@ -281,13 +299,15 @@
          x-idx          x
          [char & chars] line]
     (if char
-      (recur (update-in charels [y-idx x-idx]
-                        assoc
-                        :char char
-                        :fg (:fg styles)
-                        :bg (:bg styles))
-             (inc x-idx)
-             chars)
+      (do
+        (prn y-idx x-idx char)
+        (recur (update-in charels [y-idx x-idx]
+                          assoc
+                          :char char
+                          :fg (:fg styles)
+                          :bg (:bg styles))
+               (inc x-idx)
+               chars))
       charels)))
 
 (defmethod -draw :text [{:keys [x y styles] :as node} charels]
