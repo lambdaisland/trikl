@@ -1,5 +1,6 @@
 {:paths ["src" "test" "resources"]
- :deps  {org.clojure/clojure {:mvn/version "1.10.0"}}
+ :deps  {org.clojure/clojure                 {:mvn/version "1.10.0"}
+         }
 
  :aliases
  {:dev
@@ -7,4 +8,12 @@
 
   :test
   {:extra-deps {lambdaisland/kaocha {:mvn/version "0.0-389"}
-                lambdaisland/ansi   {:mvn/version "RELEASE"}}}}}
+                lambdaisland/ansi   {:mvn/version "RELEASE"}}}
+
+  :jediterm
+  {:extra-deps {org.jetbrains.jediterm/jediterm-pty {:mvn/version "2.22"}
+                org.slf4j/log4j-over-slf4j          {:mvn/version "1.7.25"}
+                com.google.guava/guava              {:mvn/version "23.5-jre"}}}}
+
+ :mvn/repos
+ {"jcenter" {:url "https://jcenter.bintray.com/"}}}
