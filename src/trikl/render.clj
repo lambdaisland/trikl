@@ -1,13 +1,14 @@
 (ns trikl.render
+  "Render markup, and re-render components."
   (:require [trikl.screen :as screen]
             [trikl.tree :as tree]
             [trikl.util :refer [par]]
-            [lambdaisland.ansi :as ansi]))
+            #_[lambdaisland.ansi :as ansi]))
 
-(defn bounding-box [component]
+(defn- bounding-box [component]
   (select-keys component [:x :y :width :height]))
 
-(defn grow-bounding-box [prev-state next-state path]
+(defn- grow-bounding-box [prev-state next-state path]
   (let [prev-bb (bounding-box (get-in prev-state path))
         next-bb (bounding-box (get-in prev-state path))]
     (if (or (= prev-bb next-bb) (= 1 (count path)))
@@ -36,8 +37,6 @@
              (.append sb screen/CSI-RESET-STYLES)
              (.append sb screen/CSI-CLEAR-SCREEN))
 
-        _ (prn next-matrix)
-
         next-styles (screen/diff sb
                                  (if screen-resize?
                                    {}
@@ -47,8 +46,7 @@
                                    (:charels prev-screen))
                                  next-matrix)]
 
-    (prn (ansi/token-stream (str sb)))
-    (prn (:styles prev-screen))
+    #_(prn (ansi/token-stream (str sb)))
 
     (.write out (.getBytes (str sb)))
     (update state :screen
@@ -72,29 +70,42 @@
                    (render-component (:out client) cpath))))))
   client)
 
+(declare client-render)
+
+(defn wait-for-size-and-render [client markup]
+  (let [try-render (fn [_ _ _ state]
+                     (when (:size state)
+                       (remove-watch (:state client) ::deferred-render)
+                       (client-render client markup)))]
+    (add-watch (:state client) ::deferred-render try-render)
+    (try-render nil nil nil @(:state client))))
+
 (defn- client-render [client markup]
   (swap! (:state client)
          (fn [{:keys [size] :as state}]
-           (binding [tree/*atom-factory* (atom-factory client)]
-             (-> state
-                 (update :screen
-                         (fn [screen]
-                           (if screen
-                             screen
-                             (apply screen/new-screen size))))
-                 (update :ui-tree
-                         (fn [ui-tree]
-                           (tree/layout
-                            (if ui-tree
-                              (tree/receive-markup ui-tree markup)
-                              (tree/init markup))
-                            (apply tree/new-context size))))
-                 (render-component (:out client) [:ui-tree]))))))
+           (if (nil? size)
+             (wait-for-size-and-render client markup)
+             (binding [tree/*atom-factory* (atom-factory client)]
+               (-> state
+                   (update :screen
+                           (fn [screen]
+                             (if screen
+                               screen
+                               (apply screen/new-screen size))))
+                   (update :ui-tree
+                           (fn [ui-tree]
+                             (tree/layout
+                              (if ui-tree
+                                (tree/receive-markup ui-tree markup)
+                                (tree/init markup))
+                              (apply tree/new-context size))))
+                   (render-component (:out client) [:ui-tree])))))))
 
 (defn render! [target markup]
   (if-let [clients (:clients target)]
     (run! (par client-render markup) @clients)
-    (client-render target markup)))
+    (client-render target markup))
+  target)
 
 (defn atom-factory [client]
   (fn [init]

@@ -1,5 +1,8 @@
 (ns trikl.tree
-  (:require [clojure.string :as str]))
+  "Trikl's UI tree, with partial updates and local state."
+  (:require [clojure.string :as str]
+            [trikl.screen :as screen]
+            [trikl.util :as util]))
 
 ;; - state
 ;; - focus and event handling
@@ -45,11 +48,14 @@
 (def ^:dynamic *atom-factory* nil)
 
 (defn new-context [height width]
-  {:x 0
+  {;; (requested) location/size of the current node
+   ;; location is absolute
+   :x 0
    :y 0
    :height height
    :width width
 
+   ;; area currently available for drawing
    :min-x 0
    :min-y 0
    :max-x (dec width)
@@ -77,25 +83,6 @@
     (< v mini) mini
     (< maxi v) maxi
     :else v))
-
-(defn clip-bounding-box [{:keys [min-x max-x min-y max-y] :as ctx}
-                         {:keys [x y width height] :as props}]
-  (let [ctx (cond-> ctx
-              x (assoc :x (clip min-x (+ (:x ctx) x) max-x))
-              y (assoc :y (clip min-x (+ (:y ctx) y) max-y)))]
-    (cond-> (assoc ctx :min-x (:x ctx) :min-y (:y ctx))
-      width  (assoc :width (clip 0 width (- max-x (:x ctx))))
-      height (assoc :height (clip 0 height (- max-y (:y ctx)))))))
-
-(defn style-from-props [ctx props]
-  (if-let [styles (:styles props)]
-    (update ctx :styles merge styles)
-    ctx))
-
-(defn apply-props [ctx props]
-  (-> ctx
-      (clip-bounding-box props)
-      (style-from-props props)))
 
 (def ^:dynamic *component-state* nil)
 (def ^:dynamic *node-path* [])
@@ -224,6 +211,36 @@
 (def layout nil)
 (def draw nil)
 
+(defn clip-bounding-box [{:keys [min-x max-x min-y max-y] :as ctx}
+                         {:keys [x y width height overflow] :as props}]
+  (prn ctx)
+  (let [ctx (cond-> ctx
+              x (assoc :x (clip min-x (+ (:x ctx) x) max-x))
+              y (assoc :y (clip min-y (+ (:y ctx) y) max-y)))
+        width (if width
+                (clip 0 width (- max-x (:x ctx)))
+                (:width ctx))
+        height (if height
+                 (clip 0 height (- max-y (:y ctx)))
+                 (:height ctx))]
+    (cond-> (assoc ctx
+                   :min-x (:x ctx)
+                   :min-y (:y ctx)
+                   :width width
+                   :height height)
+      (= :hidden overflow) (assoc :max-x (+ (:x ctx) width)
+                                  :max-y (+ (:y ctx) height)))))
+
+(defn style-from-props [ctx props]
+  (if-let [styles (:styles props)]
+    (update ctx :styles merge styles)
+    ctx))
+
+(defn apply-props [ctx props]
+  (-> ctx
+      (clip-bounding-box props)
+      (style-from-props props)))
+
 (defmulti -layout (fn [node ctx] (:tag node)))
 
 (defn layout [node ctx]
@@ -234,19 +251,32 @@
 (defn draw [node charels]
   (-draw node charels))
 
-(defn fit-to-children [{children :children :as node}]
+(defn fit-to-children [{:keys [children props] :as node} ctx]
   (if (seq children)
     (let [min-x (apply min (map :x children))
           min-y (apply min (map :y children))
           max-x (apply max (map #(+ (:x %) (:width %))
                                 children))
           max-y (apply max (map #(+ (:y %) (:height %))
-                                children))]
+                                children))
+
+          child-width  (- max-x min-x)
+          child-height (- max-y min-y)
+          overflow     (:overflow props :visible)]
+
       (assoc node
-             :x min-x
-             :y min-y
-             :width (- max-x min-x)
-             :height (- max-y min-y)))
+             :x (min (:x ctx) min-x)
+             :y (min (:y ctx) min-y)
+             :width (if (:width props)
+                      (case overflow
+                        :visible (max (:width ctx) child-width)
+                        :hidden (:width ctx))
+                      child-width)
+             :height (if (:height props)
+                       (case overflow
+                         :visible (max (:height ctx) child-height)
+                         :hidden (:height ctx))
+                       child-height)))
     node))
 
 (defmethod -layout :default [node ctx]
@@ -255,7 +285,7 @@
         (update :children
                 (partial mapv (fn [node]
                                 (layout node ctx))))
-        fit-to-children)
+        (fit-to-children ctx))
     (assoc node
            :x (:x ctx) :y (:y ctx)
            :width 0 :height 0)))
@@ -276,8 +306,15 @@
   (if (contains? node :children)
     (-> node
         (update :children stack-layout ctx)
-        (fit-to-children))
-    node))
+        (fit-to-children ctx))
+    (assoc node
+           :x (:x ctx)
+           :y (:y ctx)
+           :width 0
+           :height 0)))
+
+(defmethod -layout :fill [node ctx]
+  (merge node (select-keys ctx [:x :y :width :height]) ))
 
 (defmethod -layout :text [node ctx]
   (let [lines (:text node)
@@ -291,8 +328,17 @@
            :width (clip 0 width (- max-x min-x))
            :height (clip 0 height (- max-y min-y)))))
 
+(defn draw-nodes [charels nodes]
+  (reduce #(draw %2 %1) charels nodes))
+
 (defmethod -draw :default [node charels]
-  (reduce #(draw %2 %1) charels (:children node)))
+  (prn (select-keys node [:x :y :width :height :props]))
+  (cond-> charels
+    (:bg (:props node))
+    (screen/update-bounding-box node assoc :bg (:bg (:props node)))
+
+    :then
+    (draw-nodes (:children node))))
 
 (defn- draw-line [charels line x y-idx styles]
   (loop [charels        charels
@@ -300,21 +346,27 @@
          [char & chars] line]
     (if char
       (do
-        (prn y-idx x-idx char)
         (recur (update-in charels [y-idx x-idx]
-                          assoc
-                          :char char
-                          :fg (:fg styles)
-                          :bg (:bg styles))
+                          (fn [ch]
+                            (assoc ch
+                                   :char char
+                                   :fg (:fg styles)
+                                   :bg (or (:bg styles) (:bg ch)))))
                (inc x-idx)
                chars))
       charels)))
 
-(defmethod -draw :text [{:keys [x y styles] :as node} charels]
+
+(defmethod -draw :text [{:keys [x y width height styles] :as node} charels]
   (loop [charels        charels
          y-idx          y
-         [line & lines] (:text node)]
+         [line & lines] (take height (:text node))]
     (if line
-      (let [charels (draw-line charels line x y-idx styles)]
+      (let [charels (draw-line charels (util/strunc line width) x y-idx styles)]
         (recur charels (inc y-idx) lines))
       charels)))
+
+(defmethod -draw :fill [node charels]
+  (-> charels
+      (screen/update-bounding-box node assoc :bg (:bg (:props node)))
+      (draw-nodes (:children node))))

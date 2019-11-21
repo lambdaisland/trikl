@@ -29,7 +29,13 @@
   [f & xs]
   (fn [& ys]
     (apply f (concat ys xs))))
+
+(defn strunc [s n]
+  (if (> (count s) n)
+    (subs s 0 n)
+    s))
+
 (comment
   (reduce-for [] [x (range 3)
                   y (range 3)]
-              (conj % [x y])))
+    (conj % [x y])))

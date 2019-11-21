@@ -4,3 +4,7 @@
 ** interactive version upgrades
 ** interactive test runner
 ** admin UI for app
+
+* Resources
+  - [[https://gist.github.com/XVilka/8346728][Terminal truecolor support]]
+  - https://vt100.net/

@@ -113,22 +113,28 @@
                    (when new-next? (.next new-row-it)))
             styles))))))
 
-(defn blank-bounding-box [charels {:keys [^long x ^long y ^long width ^long height]}]
+(defn update-bounding-box [charels {:keys [^long x ^long y ^long width ^long height]} f & args]
   (let [max-y    (count charels)
         max-x    (count (first charels))
         row-idxs (range (min max-y y)
                         (min max-y (+ y height)))
         col-idxs (range (min max-x x)
-                        (min max-x (+ x height)))]
+                        (min max-x (+ x width)))]
     (reduce (fn [charels y]
               (update charels y
                       (fn [row]
                         (reduce (fn [row x]
-                                  (assoc row x BLANK))
+                                  (let [row (apply update row x f args)]
+                                    (prn x y (get row x))
+                                    row
+                                    ))
                                 row
                                 col-idxs))))
             charels
             row-idxs)))
+
+(defn blank-bounding-box [charels box]
+  (update-bounding-box charels box (constantly BLANK)))
 
 
 #_
