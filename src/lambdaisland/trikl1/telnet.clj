@@ -29,7 +29,16 @@
    :RECONNECTION      0x02
    :SUPPRESS_GO_AHEAD 0x03
    :NAWS              0x1f
-   :LINEMODE          0x22})
+   :LINEMODE          0x22
+
+   ;; https://tools.ietf.org/html/rfc884
+   :TERMINAL_TYPE 24
+
+   ;; https://tools.ietf.org/html/rfc1572
+   :NEW_ENVIRONMENT_OPTION 39
+   })
+
+
 
 (defn send-telnet-command [^java.net.SocketOutputStream out & args]
   (->> args
@@ -58,7 +67,7 @@
         subcmd-min   (unchecked-byte (TELNET :WILL))
         subcmd-max   (unchecked-byte (TELNET :DONT))
         cmd->kw      (into {} (map (juxt (comp unchecked-byte val) key)) TELNET)
-        byte->long   #(if (< % 0)
+        byte->long   #(if (< (long %) 0)
                         (+ 255 (long %))
                         (long %))]
     (loop [state {:src-pos  0

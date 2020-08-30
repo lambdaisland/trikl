@@ -1,8 +1,9 @@
 {:paths ["src" "test" "resources"]
  :deps  {org.clojure/clojure     {:mvn/version "1.10.1"}
          org.clojure/test.check  {:mvn/version "0.9.0"}
-         org.clojure/spec-alpha2 {:git/url "https://github.com/clojure/spec-alpha2.git"
-                                  :sha     "de38650874c6f0bc19e7755feab4d65b3fffb268"}}
+         #_#_org.clojure/spec-alpha2 {:git/url "https://github.com/clojure/spec-alpha2.git"
+                                      :sha     "de38650874c6f0bc19e7755feab4d65b3fffb268"}
+         lambdaisland/regal {:local/root "../regal"}}
 
  :aliases
  {:dev
