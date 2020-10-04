@@ -11,8 +11,8 @@
             [lambdaisland.trikl1.io :as trikl-io]
             [lambdaisland.trikl1.util :as util])
   (:import [java.io InputStream IOException OutputStream StringWriter]
-           java.lang.ProcessBuilder$Redirect
-           java.net.ServerSocket
+           [java.lang ProcessBuilder$Redirect]
+           [java.net ServerSocket]
            [java.nio ByteBuffer CharBuffer]
            [java.nio.charset Charset CharsetDecoder]
            [sun.misc Signal SignalHandler]))

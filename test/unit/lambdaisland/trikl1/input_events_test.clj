@@ -17,7 +17,7 @@
   (let [results (volatile! [])
         ctx {:char-buf (CharBuffer/wrap (apply str chars))}]
     (loop [ctx ctx]
-      (prn ctx)
+      #_(prn ctx)
       (when (.hasRemaining (:char-buf ctx))
         (recur (input-events/ansi-process-chars ctx #(vswap! results conj %)))))
     @results))
@@ -33,6 +33,9 @@
   (for-all [events (s/gen (s/coll-of :lambdaisland.trikl1.input-events/input-event))]
     (= events (chars->events (map event->chars events)))))
 
-(input-events/semantic-message )
 
-(map (juxt identity input-events/semantic-message) (sgen/sample (s/gen :lambdaisland.trikl1.input-events/input-event)))
+(comment
+
+  (input-events/semantic-message )
+
+  (map (juxt identity input-events/semantic-message) (sgen/sample (s/gen :lambdaisland.trikl1.input-events/input-event))))

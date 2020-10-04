@@ -31,9 +31,20 @@
     [:* ::interm-byte]
     ::final-byte]))
 
-(sgen/sample (s/gen ::ansi-command))
-;; =>
-("[C" "[,w" "[9!v" "[+$d" "[9?96 'l" "[971<3w" "[:?$%(&,~" "[1:3=($.%l" "[',.)\"-D" "[;6<4649<1\",$'%/)f")
+(comment
+  (sgen/sample (s/gen ::ansi-command))
+  ;; => ("[_"
+  ;;     "[$a"
+  ;;     "[7)\"s"
+  ;;     "[+&b"
+  ;;     "[0()\"%z"
+  ;;     "[5$/q"
+  ;;     "[?7606%!,["
+  ;;     "[7=2<>6#.&,!u"
+  ;;     "[9>6513*$!\"')$s"
+  ;;     "[;&($*!+!~")
+  ;; =>
+  ("[C" "[,w" "[9!v" "[+$d" "[9?96 'l" "[971<3w" "[:?$%(&,~" "[1:3=($.%l" "[',.)\"-D" "[;6<4649<1\",$'%/)f"))
 
 ;; The ESC [ is followed by any number (including none) of "parameter bytes" in
 ;; the range 0x30–0x3F (ASCII 0–9:;<=>?), then by any number of "intermediate
