@@ -4,6 +4,14 @@
 
 [![CircleCI](https://circleci.com/gh/lambdaisland/trikl.svg?style=svg)](https://circleci.com/gh/lambdaisland/trikl) [![cljdoc badge](https://cljdoc.org/badge/lambdaisland/trikl)](https://cljdoc.org/d/lambdaisland/trikl) [![Clojars Project](https://img.shields.io/clojars/v/lambdaisland/trikl.svg)](https://clojars.org/lambdaisland/trikl)
 
+Trikl is a long-term slow moving research project. It is not intended for general consumption. There are useful bits in there, but expect to get intimately familiar with the implementation if you want to get value out of them.
+
+The README below is from the first incarnation of Trikl, which had severe shortcomings around event handling and how it handles components. The groundwork for a new version has started in the `lambdaisland.trikl1.*` namespaces.
+
+[Regal](https://lambdaisland.github.io/land-of-regal/) is a spin-off library created to support this work.
+
+----
+
 Trikl lets you write terminal applications in a way that's similar to
 React/Reagent. It's main intended use case is for hobbyist/indy games.
 
