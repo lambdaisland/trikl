@@ -1,2 +1,4 @@
 #kaocha/v1
-{:tests [{:test-paths ["test/unit"]}]}
+{:tests [{:test-paths ["test/unit"]}]
+ :reporter kaocha.report/documentation
+ :plugins [:print-invocations]}

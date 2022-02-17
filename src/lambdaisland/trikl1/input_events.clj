@@ -1,4 +1,6 @@
 (ns lambdaisland.trikl1.input-events
+  "Parse and process events/commands received on the input stream, i.e.
+  VT100/ANSI/etc escape codes."
   (:require [lambdaisland.trikl1.util :as util])
   (:import (java.lang Integer)
            (java.nio CharBuffer)))
@@ -8,13 +10,17 @@
 
 (def ESC \u001b)
 
-(defn parse-screen-size
-  "Given a screen size control sequence as sent from the client, like ESC[80;20R,
-  return [row-count column-count]"
+(defn parse-cursor-pos
+  "Given a cursor position control sequence as sent from the client, like ESC[80;20R,
+  return [column row]. Note that we typically use this to infer the screen size,
+  by first moving the cursor to a high col/row and then requesting the position.
+  Also note that the order is column then row, as per Trikl conventions, even
+  though the response is row;col. The result is also zero indexed."
   [csi]
   (when csi
     (when-let [[_ row col] (re-find #"(\d+);(\d+)R" csi)]
-      [(Integer/parseInt row) (Integer/parseInt col)])))
+      [(dec (Integer/parseInt col))
+       (dec (Integer/parseInt row))])))
 
 (defn ansi-process-chars
   "Process input coming from the terminal connection. This can be simple input as
@@ -161,9 +167,9 @@
   [{:keys [type command char] :as msg}]
   (case type
     :ansi
-    (if-let [screen-size (parse-screen-size command)]
-      (with-meta {:type :screen-size
-                  :screen-size screen-size}
+    (if-let [cursor-pos (parse-cursor-pos command)]
+      (with-meta {:type :cursor-pos
+                  :cursor cursor-pos}
         {:ansi/command command})
       (if-let [key (get ansi-key-commands command)]
         (with-meta {:type :input

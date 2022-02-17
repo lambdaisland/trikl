@@ -1,9 +1,13 @@
 (ns lambdaisland.trikl1.telnet
-  (:import java.net.ServerSocket
-           javax.net.ServerSocketFactory
-           [java.io InputStream IOException OutputStream StringWriter]
-           [java.nio ByteBuffer CharBuffer]
-           [java.nio.charset Charset CharsetDecoder CodingErrorAction]))
+  "Telnet connection implementation"
+  (:require [lambdaisland.trikl1.connection :as conn]
+            [lambdaisland.trikl1.io :as io]
+            [lambdaisland.trikl1.input-events :as input-events])
+  (:import (java.net SocketOutputStream ServerSocket Socket)
+           (javax.net ServerSocketFactory)
+           (java.io InputStream IOException OutputStream StringWriter)
+           (java.nio ByteBuffer CharBuffer)
+           (java.nio.charset Charset CharsetDecoder CodingErrorAction)))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* #_true :warn-on-boxed)
@@ -11,7 +15,7 @@
 (defn ^ServerSocket server-socket [^long port]
   (.createServerSocket (ServerSocketFactory/getDefault) port))
 
-(defn accept-connection [^ServerSocket server-socket]
+(defn accept-connection ^Socket [^ServerSocket server-socket]
   (doto (.accept server-socket)
     (.setTcpNoDelay true)))
 
@@ -38,16 +42,18 @@
    :NEW_ENVIRONMENT_OPTION 39
    })
 
-
-
-(defn send-telnet-command [^java.net.SocketOutputStream out & args]
+(defn telnet-command-bytes ^bytes [args]
   (->> args
        (map #(TELNET % %))
        (map unchecked-byte)
-       ^bytes (into-array Byte/TYPE)
-       (.write out)))
+       (into-array Byte/TYPE)))
 
-(defn prep-telnet [out]
+(defn send-telnet-command [^OutputStream out & args]
+  (.write out (telnet-command-bytes args)))
+
+(defn prep-telnet
+  "Send some telnet initialization commands upon connection."
+  [out]
   (send-telnet-command out
                        :IAC :DO :LINEMODE
                        :IAC :SUBNEGOTIATION :LINEMODE
@@ -59,8 +65,7 @@
 (defn filter-commands
   "Copy buffer `src` to `dest`, filtering out any Telnet protocol commands along
   the way. These are returned separately."
-  [{:keys [^bytes src ^bytes dest ^long end]}]
-  #_(prn (take end (seq src)))
+  [{:keys [^ByteBuffer src ^ByteBuffer dest]}]
   (let [IAC          (unchecked-byte (TELNET :IAC))
         subneg-start (unchecked-byte (TELNET :SUBNEGOTIATION))
         subneg-end   (unchecked-byte (TELNET :SUBNEGOTIATION_END))
@@ -70,46 +75,35 @@
         byte->long   #(if (< (long %) 0)
                         (+ 255 (long %))
                         (long %))]
-    (loop [state {:src-pos  0
-                  :dest-pos 0
-                  :commands []}]
-      (let [{:keys [src-pos dest-pos cmd commands]} state]
-        (if (= src-pos end)
-          {:src-pos  (- src-pos (count cmd)) ;; if a command is in flight then
-           ;; don't consume the last bytes of
-           ;; the buffer
-           :dest-end dest-pos
-           :commands commands}
-          (let [b                          (aget src src-pos)
+    (loop [state {:commands []}]
+      (let [{:keys [cmd commands]} state]
+        (if (not (.hasRemaining src))
+          commands
+          (let [b (.get src)
                 {:keys [cmd cmd? subneg?]} state]
             (cond
               (and subneg? (not= subneg-end b))
               (recur (-> state
-                         (update :src-pos inc)
                          (update :cmd conj b)))
 
               (= IAC b)
               (recur (-> state
-                         (update :src-pos inc)
                          (assoc :cmd? true
                                 :cmd [b])))
 
               (and cmd? (= subneg-start b))
               (recur (-> state
-                         (update :src-pos inc)
                          (update :cmd conj b)
                          (assoc :cmd? false
                                 :subneg? true)))
 
               (and cmd? (<= subcmd-min b subcmd-max))
               (recur (-> state
-                         (update :src-pos inc)
                          (update :cmd conj b)))
 
               (or cmd? (and subneg? (= subneg-end b)))
               (let [command (conj cmd b)]
                 (recur (-> state
-                           (assoc :src-pos (inc src-pos))
                            (dissoc :cmd :cmd? :subneg?)
                            (update :commands
                                    conj (with-meta
@@ -118,78 +112,78 @@
 
               :else
               (do
-                (aset dest dest-pos b)
-                (recur (-> state
-                           (update :src-pos inc)
-                           (update :dest-pos inc)))))))))))
+                (.put dest b)
+                (recur state)))))))))
 
-(defn ^CharsetDecoder charset-decoder
-  ([]
-   (charset-decoder "UTF-8"))
-  ([encoding]
-   (-> (Charset/forName encoding)
-       .newDecoder
-       (.onMalformedInput CodingErrorAction/IGNORE)
-       (.onUnmappableCharacter CodingErrorAction/IGNORE))))
+(defrecord TelnetConnection [^Socket client-socket
+                             ^InputStream in
+                             ^OutputStream out
+                             ^Charset charset
+                             ^CharsetDecoder decoder
+                             dispatch
+                             state
+                             init-sequence
+                             reset-sequence]
+  conn/TerminalConnection
+  (init [this]
+    (prep-telnet out)
+    (when init-sequence
+      (conn/write this init-sequence))
+    ;; Might be preferable to use telnet commands for this, but this'll do.
+    #_(conn/request-screen-size out)
+    (conn/start-input-loop this)
+    this)
+  (process-bytes [this {:keys [^ByteBuffer byte-buf ^ByteBuffer next-byte-buf]
+                        ;; We allocate a second buffer the first time we've called,
+                        ;; and toggle back and forth between the two on each
+                        ;; invocation.
+                        :or {next-byte-buf (ByteBuffer/allocate 8192)}
+                        :as ctx}]
+    ;; Clear the buffer we're going to write to
+    (if (.hasRemaining byte-buf)
+      (do
+        (.clear next-byte-buf)
+        (let [commands (filter-commands {:src byte-buf
+                                         :dest next-byte-buf})]
+          (.flip next-byte-buf)
+          (run! #(dispatch this {:type :telnet :command %}) commands)
+          (assoc ctx
+                 :byte-buf next-byte-buf
+                 :next-byte-buf byte-buf)))
+      ctx))
+  (process-chars [this ctx]
+    (input-events/ansi-process-chars
+     ctx
+     (fn [event] (->> event
+                      input-events/semantic-message
+                      (dispatch this)))))
+  (write [this s]
+    (.write out (.getBytes ^String s charset)))
+  (shutdown [this]
+    (try
+      (when reset-sequence
+        (conn/write this reset-sequence))
+      (conn/cancel-input-loop this)
+      (.close out)
+      (catch Exception e))))
 
-(defn charset-decode ^CharBuffer [^CharsetDecoder decoder ^bytes buffer ^long length]
-  (.decode decoder (ByteBuffer/wrap buffer 0 length)))
-
-(defn char-telnet-reader
-  "Returns a function which reads a chunk of bytes off the input stream, filters
-  out telnet commands, converts what remains into characters (currently assumes
-  UTF-8), and returns the commands and char-buffer."
-  [^InputStream in]
-  (let [buf-size 8192
-        buffer   (byte-array buf-size)
-        buffer'  (byte-array buf-size)
-        decoder  (charset-decoder)]
-    (fn []
-      (let [end (.read in buffer 0 buf-size)
-            {:keys [dest-end commands]} (filter-commands {:src buffer :dest buffer' :end end})]
-        [commands (charset-decode decoder buffer' dest-end)]))))
-
-#_
-(let [src-buf (byte-array 10)
-      dest-buf (byte-array 10)]
-  (aset src-buf 0 (byte 60))
-  (aset src-buf 1 (byte 61))
-  (aset src-buf 2 (byte 62))
-  (aset src-buf 3 (unchecked-byte (TELNET :IAC)))
-  (aset src-buf 4 (unchecked-byte (TELNET :WILL)))
-  (aset src-buf 5 (unchecked-byte (TELNET :LINEMODE)))
-  (aset src-buf 6 (byte 70))
-  (-> (buffer-filter-commands {:src src-buf :dest dest-buf :end 7})
-      :commands
-      first
-      meta)
-  #_(seq dest-buf)
-  )
-
-
-;; InputStream == byte based stream
-;; read into byte-array
-;; strip out low level commands (e.g. telnet)
-;; decode to Character -> CharBuffer
-;; process CharBuffer, call handler
-
-#_
-(let [[commands char-buf] (read-input-stream!)]
-  (run! #(handler {:type :telnet :command %}) commands)
-  (recur (assoc state :char-buf char-buf)))
-
-#_#_
-:telnet
-(when (= (take 3 command) [:IAC :SUBNEGOTIATION :NAWS])
-  (let [raw-msg (:telnet/raw (meta command))
-        [_ _ _ cx cols rx rows] raw-msg]
-    (when (and (int? cx) (int? rx) (int? cols) (int? rows))
-      (let [rx (int rx)
-            cx (int cx)
-            rows (int rows)
-            cols (int cols)]
-        (emit (with-meta
-                {:type :screen-size
-                 :screen-size [(+ (* 256 rx) rows) (+ (* 256 cx) cols)]}
-                {:telnet/command command
-                 :telnet/raw raw-msg}))))))
+(def telnet-connection
+  (conn/wrap-connection
+   (fn [{:keys [^Socket client-socket
+                charset]
+         :or {charset "UTF-8"}
+         :as opts}]
+     (map->TelnetConnection
+      (update
+       (merge
+        {:charset charset
+         :in (.getInputStream client-socket)
+         :out (.getOutputStream client-socket)
+         :decoder (io/charset-decoder charset)
+         :init-sequence conn/default-init-sequence
+         :reset-sequence conn/default-reset-sequence
+         :state (conn/make-state opts)
+         :dispatch conn/default-dispatch}
+        opts)
+       :charset
+       #(Charset/forName %))))))

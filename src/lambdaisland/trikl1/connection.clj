@@ -8,14 +8,15 @@
   could potentially be split out."
   (:require [clojure.java.io :as io]
             [lambdaisland.trikl1.input-events :as input-events]
+            [lambdaisland.trikl1.term :as term]
             [lambdaisland.trikl1.io :as trikl-io]
             [lambdaisland.trikl1.util :as util])
-  (:import [java.io InputStream IOException OutputStream StringWriter]
-           [java.lang ProcessBuilder$Redirect]
-           [java.net ServerSocket]
-           [java.nio ByteBuffer CharBuffer]
-           [java.nio.charset Charset CharsetDecoder]
-           [sun.misc Signal SignalHandler]))
+  (:import (java.io InputStream IOException OutputStream StringWriter)
+           (java.lang ProcessBuilder$Redirect)
+           (java.net ServerSocket Socket)
+           (java.nio ByteBuffer CharBuffer)
+           (java.nio.charset Charset CharsetDecoder)
+           (sun.misc Signal SignalHandler)))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* #_true :warn-on-boxed)
@@ -27,27 +28,35 @@
   (shutdown [conn])
   (write [conn s]))
 
-(def ESC \u001b)
+(def default-init-sequence
+  "Default sequence we send to the terminal upon initializing a new connection"
+  (str term/ALTERNATE-SCREEN ; Switch to alternate screen, so we can revert back to what was on the screen later
+       term/CLEAR-SCREEN     ; Clear the terminal
+       term/UPPER-LEFT       ; Move the cursor to 0,0 so we know where we are
+       term/RESET-STYLES     ; Reset styles (colors etc)
+       term/HIDE-CURSOR      ; Hide the cursor
+       ))
 
-(def CSI-ALTERNATE-SCREEN (str ESC "[?1049h"))
-(def CSI-REGULAR-SCREEN   (str ESC "[?1049l"))
-(def CSI-CLEAR-SCREEN     (str ESC "[2J"))
-(def CSI-UPPER-LEFT       (str ESC "[H"))
-(def CSI-RESET-STYLES     (str ESC "[m"))
-(def CSI-SHOW-CURSOR      (str ESC "[?25h"))
-(def CSI-HIDE-CURSOR      (str ESC "[?25l"))
+(def default-reset-sequence
+  "Default sequence we send to the terminal when cleaning up a connection before
+  closing it"
+  (str term/REGULAR-SCREEN ; Switch back from alternate to regular screen, should restore whatever was on the screen
+       term/RESET-STYLES   ; Make sure we don't leave any lingering style flags
+       term/SHOW-CURSOR    ; Show the cursor again
+       ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; State
 
 (defn make-state
   "Create an empty connection state."
-  []
+  [{:keys [listeners]
+    :or {listeners {}}}]
   (atom {:ui-tree nil
          :screen nil
          :focus nil
          :size nil
-         :listeners {}}))
+         :listeners listeners}))
 
 (defn add-listener
   "Add an event listener to the connection, identified with the given key.
@@ -75,7 +84,12 @@
   [conn]
   (-> conn :state deref :listeners vals))
 
-(defn input-loop [{:keys [^InputStream in ^CharsetDecoder decoder] :as conn}]
+(defn input-loop
+  "Read bytes from the input stream, decode to characters, and let the Connection
+  handle them. Connections can implement both [[process-bytes]]
+  and [[process-chars]], to handle byte-based (e.g. telnet) as well as character
+  based (e.g. ANSI) commands."
+  [{:keys [^InputStream in ^CharsetDecoder decoder] :as conn}]
   (try
     (loop [{:keys [^ByteBuffer byte-buf
                    ^CharBuffer char-buf]
@@ -83,14 +97,17 @@
            {:byte-buf (doto (ByteBuffer/allocate 8192) (.limit 0))
             :char-buf (doto (CharBuffer/allocate 8192) (.limit 0))}]
       (cond
+        ;; If there are any characters left to process, then do that.
         (.hasRemaining char-buf)
         (recur (process-chars conn ctx))
 
+        ;; Else we need to fill the character buffer by first reading bytes...
         (not (.hasRemaining byte-buf))
         (let [byte-buf (trikl-io/read-to-byte-buffer in byte-buf)
               ctx      (assoc ctx :byte-buf byte-buf)]
           (recur (process-bytes conn ctx)))
 
+        ;; And decoding them to characters.
         :else
         (let [char-buf (trikl-io/charset-decode decoder byte-buf)
               ctx (assoc ctx :char-buf char-buf)]
@@ -130,17 +147,19 @@
                  (future-cancel input-loop)
                  (dissoc state ::input-loop))))
 
+(def screen-size-request-sequence
+  (.getBytes
+   (str term/SAVE-CURSOR-POS
+        (term/move-to 5000 5000)
+        term/REQUEST-POSITION
+        term/RESTORE-CURSOR-POS)
+   "UTF-8"))
+
 (defn request-screen-size
   "Request the screen size from the terminal, by requesting to move the cursor out
   of bounds, followed by a request for the cursor position."
   [^OutputStream out]
-  (let [csi (fn [& args]
-              (let [^String code (apply str ESC "[" args)]
-                (.write out (.getBytes code)))) buffer (byte-array 1024)]
-    (csi "s") ;; save cursor position
-    (csi "5000;5000H") ;; move to position outside of screen, this will actually move the cursor to the bottom right
-    (csi "6n") ;; ask the client to send us the position of the cursor
-    (csi "u"))) ;; restore cursor position
+  (.write out ^bytes screen-size-request-sequence))
 
 (defn resize-listener
   "Keep the connection (client terminal) its :size value up to date by listening
@@ -169,7 +188,6 @@
         process (-> (ProcessBuilder. (util/string-array (cons "stty" args)))
                     (.redirectInput (ProcessBuilder$Redirect/from (io/file "/dev/tty")))
                     (.start))
-
         ^StringWriter err (StringWriter.)]
     {:exit (.waitFor process)
      :err @(future
@@ -194,26 +212,26 @@
                             ^OutputStream out
                             ^Charset charset
                             ^CharsetDecoder decoder
-                            dispatch state stty?]
+                            dispatch state stty?
+                            init-sequence
+                            reset-sequence]
   TerminalConnection
   (init [this]
     (when stty?
       (exec-stty "-echo" "-icanon"))
-    (write this (str CSI-ALTERNATE-SCREEN
-                     CSI-CLEAR-SCREEN
-                     CSI-UPPER-LEFT
-                     CSI-RESET-STYLES
-                     CSI-HIDE-CURSOR))
+    (when init-sequence
+      (write this init-sequence))
     (request-screen-size out)
-    (Signal/handle (Signal. "WINCH")
-                   (reify SignalHandler
-                     (^void handle [this ^Signal s]
-                      (let [out (:out (exec-stty "size"))]
-                        (when-let [[_ rows cols] (re-find #"(\d+) (\d+)" out)]
-                          (dispatch this
-                                    (-> {:type        :screen-size
-                                         :screen-size [(Long/parseLong rows) (Long/parseLong cols)]}
-                                        (with-meta {:trikl/source :SIGWINCH}))))))))
+    (Signal/handle
+     (Signal. "WINCH")
+     (reify SignalHandler
+       (^void handle [this ^Signal s]
+        (let [out (:out (exec-stty "size"))]
+          (when-let [[_ rows cols] (re-find #"(\d+) (\d+)" out)]
+            (dispatch this
+                      (-> {:type        :screen-size
+                           :screen-size [(Long/parseLong rows) (Long/parseLong cols)]}
+                          (with-meta {:trikl/source :SIGWINCH}))))))))
     (start-input-loop this)
     this)
   (process-bytes [_ ctx]
@@ -230,9 +248,8 @@
     (try
       (when stty?
         (exec-stty "+echo" "+icanon"))
-      (write this (str CSI-REGULAR-SCREEN
-                       CSI-RESET-STYLES
-                       CSI-SHOW-CURSOR))
+      (when reset-sequence
+        (write this reset-sequence))
       (cancel-input-loop this)
       (.close out)
       (catch Exception e))))
@@ -247,24 +264,33 @@
          :or   {in      System/in
                 out     System/out
                 charset "UTF-8"
-                stty?   true}}]
-     (map->StdioConnection {:in       in
-                            :out      out
-                            :charset  (Charset/forName charset)
-                            :decoder  (trikl-io/charset-decoder charset)
-                            :dispatch default-dispatch
-                            :state    (make-state)
-                            :stty?    stty?}))))
+                stty?   true}
+         :as opts}]
+     (map->StdioConnection
+      (update
+       (merge
+        {:in in
+         :out out
+         :charset charset
+         :stty? stty?
+         :decoder        (trikl-io/charset-decoder charset)
+         :dispatch       default-dispatch
+         :state          (make-state opts)
+         :init-sequence  default-init-sequence
+         :reset-sequence default-reset-sequence}
+        opts)
+       :charset
+       #(Charset/forName %))))))
 
 (def socket-connection
   "Create a connection based on a socket, e.g. a TCPSocket connected to with
   `nc(1)`. In this case we don't have access to the TTY, so it's up to the user
   to make sure it's in raw mode: `stty -echo -icanon`."
   (wrap-connection
-   (fn [{:keys [socket] :as opts}]
+   (fn [{:keys [^Socket socket] :as opts}]
      (stdio-connection (assoc opts
-                              :in (.getInputStream cs)
-                              :out (.getOutputStream cs)
+                              :in (.getInputStream socket)
+                              :out (.getOutputStream socket)
                               :stty? false)))))
 
 (comment
