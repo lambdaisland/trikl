@@ -9,3 +9,10 @@
 
 (defn char-in-range? [min ch max]
   (<= (long min) (long ch) (long max)))
+
+(defn reduce-idx [f init coll]
+  (let [idx (volatile! 0)]
+    (reduce (fn [acc x]
+              (f (vswap! idx inc) acc x))
+            init
+            coll)))

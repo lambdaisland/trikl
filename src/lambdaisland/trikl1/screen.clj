@@ -1,6 +1,7 @@
 (ns lambdaisland.trikl1.screen
   "Representation of terminal state, and screen-level diffing (committing)."
-  (:require [lambdaisland.trikl1.term :as term])
+  (:require [lambdaisland.trikl1.term :as term]
+            [lambdaisland.trikl1.util :as util])
   (:import (clojure.lang PersistentVector)
            (java.lang StringBuilder)
            (java.util Iterator)))
@@ -25,7 +26,7 @@
 (defn new-screen [height width]
   {:term-state {:cursor [0 0]}
    :size       [height width]
-   :charels    (charel-matrix height width)})
+   :matrix    (charel-matrix height width)})
 
 (def NULL_ITERATOR
   (reify Iterator
@@ -40,7 +41,7 @@
   (.append sb (term/move-relative cursor target))
   (assoc term-state :cursor target))
 
-(defn diff-row [^StringBuilder sb row-idx term-state ^PersistentVector old ^PersistentVector new]
+(defn diff-row [^StringBuilder sb row-idx term-state ^Iterable old ^Iterable new]
   (let [^Iterator old-it (if old (.iterator old) NULL_ITERATOR)
         ^Iterator new-it (if new (.iterator new) NULL_ITERATOR)]
     (loop [term-state  term-state
@@ -95,7 +96,7 @@
   Charel that was drawn, but it should be treated as a map with :fg and :bg
   keys.)
   "
-  [^StringBuilder sb term-state ^PersistentVector old ^PersistentVector new]
+  [^StringBuilder sb term-state ^Iterable old ^Iterable new]
   (let [^Iterator old-row-it (.iterator old)
         ^Iterator new-row-it (.iterator new)]
     (loop [term-state term-state
@@ -112,42 +113,56 @@
                    (when new-next? (.next new-row-it)))
             term-state))))))
 
-(defn resize [{:keys [size charels] :as screen} [height width]]
-  (let [[orig-height orig-width] size
+(defn resize [{:keys [size matrix] :as screen} [^long height ^long width]]
+  (let [[^long orig-height ^long orig-width] size
         resize-line (if (<= width orig-width)
                       #(vec (take width %))
                       #(into % (repeat (- orig-width width) BLANK)))
         matrix (if (<= height orig-height)
-                 (mapv resize-line (take height charels))
-                 (into (mapv resize-line charels)
+                 (mapv resize-line (take height matrix))
+                 (into (mapv resize-line matrix)
                        (charel-matrix (- height orig-height) width)))]
     (assoc screen
            :size [height width]
-           :charels matrix)))
+           :matrix matrix)))
 
+(defn update-matrix [matrix f & args]
+  (persistent!
+   (util/reduce-idx
+    (fn [row-idx acc row]
+      (conj!
+       acc
+       (persistent!
+        (util/reduce-idx
+         (fn [col-idx acc charel]
+           (conj! acc (apply f col-idx row-idx charel args)))
+         (transient [])
+         row))))
+    (transient [])
+    matrix)))
+
+#_(defn update-bounding-box [matrix {:keys [^long x ^long y ^long width ^long height]} f & args]
+    (let [max-y    (count matrix)
+          max-x    (count (first matrix))
+          row-idxs (range (min max-y y)
+                          (min max-y (+ y height)))
+          col-idxs (range (min max-x x)
+                          (min max-x (+ x width)))]
+      (reduce (fn [matrix y]
+                (update matrix y
+                        (fn [row]
+                          (reduce (fn [row x]
+                                    (let [row (apply update row x f args)]
+                                      (prn x y (get row x))
+                                      row
+                                      ))
+                                  row
+                                  col-idxs))))
+              matrix
+              row-idxs)))
 #_
-(defn update-bounding-box [charels {:keys [^long x ^long y ^long width ^long height]} f & args]
-  (let [max-y    (count charels)
-        max-x    (count (first charels))
-        row-idxs (range (min max-y y)
-                        (min max-y (+ y height)))
-        col-idxs (range (min max-x x)
-                        (min max-x (+ x width)))]
-    (reduce (fn [charels y]
-              (update charels y
-                      (fn [row]
-                        (reduce (fn [row x]
-                                  (let [row (apply update row x f args)]
-                                    (prn x y (get row x))
-                                    row
-                                    ))
-                                row
-                                col-idxs))))
-            charels
-            row-idxs)))
-#_
-(defn blank-bounding-box [charels box]
-  (update-bounding-box charels box (constantly BLANK)))
+(defn blank-bounding-box [matrix box]
+  (update-bounding-box matrix box (constantly BLANK)))
 
 
 #_

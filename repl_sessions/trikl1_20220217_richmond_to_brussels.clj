@@ -27,13 +27,13 @@
      :term-state {:cursor [0 0]}
      :conn tc)))
 
-(defn draw-line [charels line x y-idx styles]
-  (loop [charels        charels
+(defn draw-line [matrix line x y-idx styles]
+  (loop [matrix        matrix
          x-idx          x
          [char & chars] line]
     (if char
       (do
-        (recur (update-in charels [y-idx x-idx]
+        (recur (update-in matrix [y-idx x-idx]
                           (fn [ch]
                             (assoc ch
                                    :char char
@@ -41,18 +41,18 @@
                                    :bg (or (:bg styles) (:bg ch)))))
                (inc x-idx)
                chars))
-      charels)))
+      matrix)))
 
 (defn draw! [!screen f & args]
   (swap!
    !screen
-   (fn [{:keys [charels term-state conn] :as screen}]
-     (let [new-charels (apply f charels args)
+   (fn [{:keys [matrix term-state conn] :as screen}]
+     (let [new-matrix (apply f matrix args)
            sb (StringBuilder.)
-           new-state (screen/diff sb term-state charels new-charels)]
+           new-state (screen/diff sb term-state matrix new-matrix)]
        (conn/write conn (str sb))
        (assoc screen
-              :charels new-charels
+              :matrix new-matrix
               :term-state new-state)))))
 
 (defn add-blank-line! [!screen]
@@ -117,7 +117,3 @@
 (def prev @screen)
 
 (conn/shutdown tc)
-(screen/new-screen 5 60)
-(:cursor @screen)
-(conn/write tc (str sb))
-@screen
