@@ -12,8 +12,15 @@
 
 (def BLANK (->Charel \space nil nil))
 
-(defn charel-matrix [height width]
-  (vec (repeat height (vec (repeat width BLANK)))))
+(def blank-line
+  (memoize #(vec (repeat % BLANK))))
+
+(defn charel-matrix
+  ([screen]
+   (charel-matrix (first (:size screen))
+                  (second (:size screen))))
+  ([height width]
+   (vec (repeat height (blank-line width)))))
 
 (defn new-screen [height width]
   {:term-state {:cursor [0 0]}
@@ -104,6 +111,19 @@
                    (when old-next? (.next old-row-it))
                    (when new-next? (.next new-row-it)))
             term-state))))))
+
+(defn resize [{:keys [size charels] :as screen} [height width]]
+  (let [[orig-height orig-width] size
+        resize-line (if (<= width orig-width)
+                      #(vec (take width %))
+                      #(into % (repeat (- orig-width width) BLANK)))
+        matrix (if (<= height orig-height)
+                 (mapv resize-line (take height charels))
+                 (into (mapv resize-line charels)
+                       (charel-matrix (- height orig-height) width)))]
+    (assoc screen
+           :size [height width]
+           :charels matrix)))
 
 #_
 (defn update-bounding-box [charels {:keys [^long x ^long y ^long width ^long height]} f & args]

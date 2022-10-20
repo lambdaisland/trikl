@@ -1,5 +1,5 @@
 {:paths ["src" "test" "resources"]
- :deps  {org.clojure/clojure     {:mvn/version "1.10.3"}
+ :deps  {org.clojure/clojure     {:mvn/version "1.11.1"}
          org.clojure/test.check  {:mvn/version "1.1.1"}
          org.clojure/spec.alpha  {:mvn/version "RELEASE"}
          #_#_org.clojure/spec-alpha2 {:git/url "https://github.com/clojure/spec-alpha2.git"
@@ -11,13 +11,13 @@
   {}
 
   :test
-  {:extra-deps {lambdaisland/kaocha {:mvn/version "1.63.998"}
+  {:extra-deps {lambdaisland/kaocha {:mvn/version "1.70.1086"}
                 lambdaisland/ansi   {:mvn/version "RELEASE"}}}
 
   :jediterm
   {:extra-deps {org.jetbrains.jediterm/jediterm-pty {:mvn/version "2.42"}
-                org.slf4j/log4j-over-slf4j          {:mvn/version "1.7.36"}
-                com.google.guava/guava              {:mvn/version "31.0.1-jre"}}}}
+                org.slf4j/log4j-over-slf4j          {:mvn/version "2.0.3"}
+                com.google.guava/guava              {:mvn/version "31.1-jre"}}}}
 
  :mvn/repos
  {"jcenter" {:url "https://jcenter.bintray.com/"}}}

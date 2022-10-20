@@ -1,0 +1,10 @@
+#!/usr/bin/env bb
+
+(require '[lambdaisland.launchpad :as launchpad]
+         '[babashka.process :refer [process]])
+
+(launchpad/main {:steps (concat
+                         [(partial launchpad/ensure-java-version 17)]
+                         launchpad/before-steps
+                         [launchpad/start-process]
+                         launchpad/after-steps)})
