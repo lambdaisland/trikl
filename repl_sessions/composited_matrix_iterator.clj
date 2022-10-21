@@ -1,5 +1,8 @@
 (ns composited-matrix-iterator
-  (:require [lambdaisland.trikl1.screen :as screen]))
+  (:require
+   [lambdaisland.trikl1.screen :as screen])
+  (:import
+   (java.util Arrays)))
 
 (defn composite-matrix [[width height] components]
   (reify Iterable
@@ -30,7 +33,6 @@
                          components)))))))))))))
 
 
-
 (time (doall (for [row
                    (iterator-seq
                     (.iterator
@@ -53,3 +55,18 @@
                                        (assoc charel :char \#))))}])))]
                (doall (for [col (iterator-seq (.iterator row))]
                         col)))))
+(time (doall (for [row
+                   (iterator-seq
+                    (.iterator
+                     (screen/charel-matrix 10 10)))]
+               (doall (for [col (iterator-seq (.iterator row))]
+                        col)))))
+(let  [arrays (into-array Object (map #(into-array Object %) (screen/charel-matrix 10 10)))]
+  (time (doall (for [row (iterator-seq (.iterator (Arrays/stream arrays)))]
+                 (doall (for [col (iterator-seq (.iterator (Arrays/stream row)))]
+                          col))))))
+
+(let [arrays (into-array Object (map #(into-array Object %) (screen/charel-matrix 10 10)))]
+  (time (doall (for [row arrays]
+                 (doall (for [col row]
+                          col))))))

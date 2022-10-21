@@ -20,13 +20,18 @@
   ([screen]
    (charel-matrix (first (:size screen))
                   (second (:size screen))))
-  ([height width]
+  ([width height]
    (vec (repeat height (blank-line width)))))
 
-(defn new-screen [height width]
-  {:term-state {:cursor [0 0]}
-   :size       [height width]
-   :matrix    (charel-matrix height width)})
+(defn new-screen
+  ([[width height]]
+   (new-screen width height))
+  ([width height]
+   (let [matrix (charel-matrix width height)]
+     {:term-state {:cursor [0 0]}
+      :size       [width height]
+      :matrix     matrix
+      :!matrix    (atom nil)})))
 
 (def NULL_ITERATOR
   (reify Iterator
@@ -37,7 +42,6 @@
   "Write commands to move the cursor to a new location, and update the cursor
   state accordingly."
   [^StringBuilder sb {:keys [cursor] :as term-state} target]
-  (println "Moving to" target)
   (.append sb (term/move-relative cursor target))
   (assoc term-state :cursor target))
 
@@ -67,14 +71,12 @@
                 {:keys [cursor] :as term-state} (if streak?
                                                   term-state
                                                   (term-move-relative sb term-state [col-idx row-idx]))]
-            (println "new cursor" cursor)
             (when fg? (.append sb (term/foreground-color-rgb fg)))
             (when bg? (.append sb (term/background-color-rgb bg)))
             (.append sb char)
             (let [new-term-state (assoc (if (or fg? bg?) new-ch term-state)
                                         :cursor
                                         (update cursor 0 inc))]
-              (println "new-term-state" new-term-state)
               (if new-next?
                 (recur new-term-state
                        (inc col-idx)
@@ -113,8 +115,8 @@
                    (when new-next? (.next new-row-it)))
             term-state))))))
 
-(defn resize [{:keys [size matrix] :as screen} [^long height ^long width]]
-  (let [[^long orig-height ^long orig-width] size
+(defn resize [{:keys [size matrix] :as screen} [^long width ^long height]]
+  (let [[^long orig-width ^long orig-height] size
         resize-line (if (<= width orig-width)
                       #(vec (take width %))
                       #(into % (repeat (- orig-width width) BLANK)))
@@ -122,9 +124,26 @@
                  (mapv resize-line (take height matrix))
                  (into (mapv resize-line matrix)
                        (charel-matrix (- height orig-height) width)))]
+    #_(reset! (:!matrix screen) matrix)
     (assoc screen
-           :size [height width]
+           :size [width height]
            :matrix matrix)))
+
+(defn flush!
+  "Flushes the contents of !matrix to the screen, and updates the connection state.
+  To use this first initialize the !matrix atom to a matrix of the same size as
+  the screen, apply changes to it, and then call [[flush!]]."
+  [conn]
+  (swap! (:state conn)
+         update :screen
+         (fn [{:keys [!matrix matrix term-state] :as screen}]
+           (let [new-matrix @!matrix
+                 sb (StringBuilder.)
+                 new-state (screen/diff sb term-state matrix new-matrix)]
+             (conn/write conn (str sb))
+             (assoc screen
+                    :matrix new-matrix
+                    :term-state new-state)))))
 
 (defn update-matrix [matrix f & args]
   (persistent!

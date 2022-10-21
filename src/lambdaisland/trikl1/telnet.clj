@@ -20,13 +20,13 @@
     (.setTcpNoDelay true)))
 
 (def TELNET
-  {:SUBNEGOTIATION_END 0xf0
-   :SUBNEGOTIATION     0xfa
-   :WILL               0xfb
-   :WONT               0xfc
-   :DO                 0xfd
-   :DONT               0xfe
-   :IAC                0xff
+  {:SE   0xf0 ; SUBNEGOTIATION_END
+   :SB   0xfa ; SUBNEGOTIATION
+   :WILL 0xfb
+   :WONT 0xfc
+   :DO   0xfd
+   :DONT 0xfe
+   :IAC  0xff
 
    :TRANSMIT_BINARY   0x00
    :ECHO              0x01
@@ -56,9 +56,9 @@
   [out]
   (send-telnet-command out
                        :IAC :DO :LINEMODE
-                       :IAC :SUBNEGOTIATION :LINEMODE
+                       :IAC :SB :LINEMODE
                        (byte 1) (byte 0)
-                       :IAC :SUBNEGOTIATION_END
+                       :IAC :SE
                        :IAC :WILL :ECHO
                        :IAC :DO :NAWS))
 
@@ -67,8 +67,8 @@
   the way. These are returned separately."
   [{:keys [^ByteBuffer src ^ByteBuffer dest]}]
   (let [IAC          (unchecked-byte (TELNET :IAC))
-        subneg-start (unchecked-byte (TELNET :SUBNEGOTIATION))
-        subneg-end   (unchecked-byte (TELNET :SUBNEGOTIATION_END))
+        subneg-start (unchecked-byte (TELNET :SB))
+        subneg-end   (unchecked-byte (TELNET :SE))
         subcmd-min   (unchecked-byte (TELNET :WILL))
         subcmd-max   (unchecked-byte (TELNET :DONT))
         cmd->kw      (into {} (map (juxt (comp unchecked-byte val) key)) TELNET)
@@ -107,7 +107,11 @@
                            (dissoc :cmd :cmd? :subneg?)
                            (update :commands
                                    conj (with-meta
-                                          (mapv #(cmd->kw % (byte->long %)) command)
+                                          (vec
+                                           (concat
+                                            (map #(cmd->kw % (byte->long %)) (take 3 command))
+                                            (map byte->long (butlast (drop 3 command)))
+                                            (map #(cmd->kw % (byte->long %)) [(last command)])))
                                           {:telnet/raw (mapv byte->long command)})))))
 
               :else
@@ -146,7 +150,16 @@
         (let [commands (filter-commands {:src byte-buf
                                          :dest next-byte-buf})]
           (.flip next-byte-buf)
-          (run! #(dispatch this {:type :telnet :command %}) commands)
+          (doseq [cmd commands]
+            (dispatch
+             this
+             (if (= [:IAC :SB :NAWS] (take 3 cmd))
+               (let [[_ _ _ ^long cx ^long cols ^long rx ^long rows] cmd]
+                 (with-meta
+                   {:type :screen-size
+                    :screen-size [(+ (* 256 cx) cols) (+ (* 256 rx) rows)]}
+                   (meta cmd)))
+               {:type :telnet :command cmd})))
           (assoc ctx
                  :byte-buf next-byte-buf
                  :next-byte-buf byte-buf)))

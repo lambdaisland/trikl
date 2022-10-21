@@ -52,9 +52,7 @@
   "Create an empty connection state."
   [{:keys [listeners]
     :or {listeners {}}}]
-  (atom {:ui-tree nil
-         :screen nil
-         :focus nil
+  (atom {:screen nil
          :size nil
          :listeners listeners}))
 
@@ -163,12 +161,20 @@
 
 (defn resize-listener
   "Keep the connection (client terminal) its :size value up to date by listening
-  for :screen-size events. These can have multiple sources, SIGWINCH, telnet, or
-  from the above [[request-screen-size]] hack."
+  for :screen-size events. These can have multiple sources, SIGWINCH, telnet."
   [e]
   (when-let [s (:screen-size e)]
     (let [state (-> e meta :trikl/connection :state)]
       (swap! state assoc :size (with-meta s {:trikl/message e})))))
+
+(defn cursor-pos-resize-listener
+  "Keep the connection (client terminal) its :size value up to date by listening
+  for :cursor-pos events, use in combination with the
+  above [[request-screen-size]]."
+  [e]
+  (when-let [[^long w ^long h] (:cursor-pos e)]
+    (let [state (-> e meta :trikl/connection :state)]
+      (swap! state assoc :size (with-meta [(inc w) (inc h)] {:trikl/message e})))))
 
 (defn default-dispatch
   "Default dispatch function for connections, dispatch events to all current
@@ -265,14 +271,14 @@
                 out     System/out
                 charset "UTF-8"
                 stty?   true}
-         :as opts}]
+         :as   opts}]
      (map->StdioConnection
       (update
        (merge
-        {:in in
-         :out out
-         :charset charset
-         :stty? stty?
+        {:in             in
+         :out            out
+         :charset        charset
+         :stty?          stty?
          :decoder        (trikl-io/charset-decoder charset)
          :dispatch       default-dispatch
          :state          (make-state opts)

@@ -29,10 +29,16 @@
   (let [limit (.read in (.array bb) 0 (.capacity bb))]
     (println {::read-to-byte-buffer {:read limit
                                      :bytes (take limit (String. (.array bb)))}})
-    (if (< 0 limit)
+    (cond
+      (= -1 limit)
+      (throw (java.io.IOException. "End of stream reading input-stream"))
+
+      (< 0 limit)
       (doto bb
         (.rewind)
         (.limit limit))
+
+      :else
       (doto bb
         (.rewind)
         (.limit 0)))))
