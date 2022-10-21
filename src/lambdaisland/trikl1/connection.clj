@@ -284,7 +284,7 @@
          :state          (make-state opts)
          :init-sequence  default-init-sequence
          :reset-sequence default-reset-sequence}
-        opts)
+        (dissoc opts :listeners))
        :charset
        #(Charset/forName %))))))
 

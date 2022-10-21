@@ -197,6 +197,6 @@
          :reset-sequence conn/default-reset-sequence
          :state (conn/make-state opts)
          :dispatch conn/default-dispatch}
-        opts)
+        (dissoc opts :listeners))
        :charset
        #(Charset/forName %))))))

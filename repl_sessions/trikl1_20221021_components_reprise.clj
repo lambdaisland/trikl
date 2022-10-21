@@ -94,7 +94,6 @@
                       (- w pad-right) (- h pad-bottom)))))))
 
 
-(defonce ss (telnet/server-socket 9999))
 
 (defn add-blank-lines! [conn n]
   (let [{:keys [state]} conn
@@ -134,6 +133,7 @@
 
 (time (println "ok"))
 
+(defonce ss (telnet/server-socket 9999))
 (defonce connections (atom []))
 
 (defn conn []

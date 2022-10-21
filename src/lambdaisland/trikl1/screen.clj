@@ -1,7 +1,8 @@
 (ns lambdaisland.trikl1.screen
   "Representation of terminal state, and screen-level diffing (committing)."
   (:require [lambdaisland.trikl1.term :as term]
-            [lambdaisland.trikl1.util :as util])
+            [lambdaisland.trikl1.util :as util]
+            [lambdaisland.trikl1.connection :as conn])
   (:import (clojure.lang PersistentVector)
            (java.lang StringBuilder)
            (java.util Iterator)))
@@ -139,11 +140,12 @@
          (fn [{:keys [!matrix matrix term-state] :as screen}]
            (let [new-matrix @!matrix
                  sb (StringBuilder.)
-                 new-state (screen/diff sb term-state matrix new-matrix)]
+                 new-state (diff sb term-state matrix new-matrix)]
              (conn/write conn (str sb))
              (assoc screen
                     :matrix new-matrix
-                    :term-state new-state)))))
+                    :term-state new-state))))
+  nil)
 
 (defn update-matrix [matrix f & args]
   (persistent!
