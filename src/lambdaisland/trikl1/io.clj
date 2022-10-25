@@ -1,7 +1,7 @@
 (ns lambdaisland.trikl1.io
   (:import java.io.InputStream
-           [java.nio ByteBuffer CharBuffer]
-           [java.nio.charset Charset CharsetDecoder CoderResult CodingErrorAction]))
+           (java.nio ByteBuffer CharBuffer)
+           (java.nio.charset Charset CharsetDecoder CoderResult CodingErrorAction)))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* #_true :warn-on-boxed)
@@ -18,6 +18,7 @@
 (defn charset-decode ^CharBuffer [^CharsetDecoder decoder ^ByteBuffer byte-buf]
   (.decode decoder byte-buf))
 
+#_
 (.limit
  (.limit
   (charset-decode
