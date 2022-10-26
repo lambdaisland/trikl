@@ -28,8 +28,7 @@
   (-minimum-size [_])
   (-maximum-size [_])
   (-draw [_ surface])
-  (-redraw [_])
-  (-cleanup [_]))
+  (-unmount [_]))
 
 (defn delayed [val ms]
   (let [target-ms (+ ms (System/currentTimeMillis))]
@@ -89,8 +88,6 @@
     (-draw [_ surface]
       (dotimes [i (.length text)]
         (-put-char surface (+ x i) y (screen/->Charel (.charAt text i) fg bg))))))
-
-(def !state (atom (cycle "⣾⣽⣻⢿⡿⣟⣯⣷")))
 
 (defn spinner [{:keys [fg bg]}]
   (let [!state (atom (cycle (reverse "⣾⣽⣻⢿⡿⣟⣯⣷")))]
@@ -153,8 +150,6 @@
                       pad-left pad-top
                       (- w pad-right) (- h pad-bottom)))))))
 
-
-
 (defn add-blank-lines! [conn n]
   (let [{:keys [state]} conn
         {:keys [screen]} @state
@@ -197,11 +192,7 @@
                            (take 2 bounding-box)
                            (drop 2 bounding-box)))
   (screen/flush! conn))
-#_(let [{:keys [delay-queue event-queue]} (conn)
-        e (.take delay-queue)]
-    (println "take-delayed:" e)
-    (println "take-delayed:" @e)
-    (.offer event-queue @e))
+
 (defn start-event-loop [conn]
   (let [event-queue (PriorityBlockingQueue.
                      11
