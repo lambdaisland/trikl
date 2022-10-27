@@ -3,8 +3,9 @@
   (:import (clojure.lang IAtom IAtom2 IDeref IMeta IRef IReference)))
 
 (set! *warn-on-reflection* true)
+(def ^:dynamic *tracing-context* nil)
 
-(deftype Cursor [the-atom path ^:volatile-mutable -meta]
+(deftype Cursor [the-atom path ^:volatile-mutable metadata]
   IAtom
   (swap [this f]
     (get-in
@@ -55,10 +56,14 @@
           (.swapVals ^IAtom2 the-atom assoc-in path newv)))
 
   IRef
+  ;;; No good way to delegate the validator, since it would replace the validator
+  ;;; on the atom. We could handle it ourselves but that gets tedious, so punting
+  ;;; on it until it turns out there's a good use case.
   ;; (setValidator [this f]
   ;;   (.setValidator the-atom f))
   ;; (getValidator [this]
   ;;   (.getValidator the-atom))
+  ;;; Seems this is only used internally in some STM code? YAGNI
   ;; (getWatches [this]
   ;;   (.getWatches the-atom))
   (addWatch [this key callback]
@@ -71,21 +76,16 @@
 
   IMeta
   (meta [^Cursor this]
-    (._meta this))
+    (.metadata this))
 
   IReference
   (alterMeta [this alter args]
-    (set! (._meta this) (apply alter @this args)))
+    (set! (.metadata this) (apply alter @this args)))
   (resetMeta [this m]
-    (set! (._meta this) m))
+    (set! (.metadata this) m))
 
   IDeref
   (deref [this] (get-in @the-atom path)))
-
-(defn cursor [the-atom path]
-  (->Cursor the-atom path nil))
-
-(def ^:dynamic *tracing-context* nil)
 
 (deftype RAtom [^clojure.lang.Atom the-atom]
   IAtom
@@ -142,9 +142,6 @@
       (vswap! *tracing-context* conj this))
     @the-atom))
 
-(defn ratom [value]
-  (->RAtom (atom value)))
-
 (definterface IReaction
   (stopReaction []))
 
@@ -182,16 +179,57 @@
     (doseq [dep dependencies]
       (remove-watch dep the-atom))))
 
-(defn make-reaction [thunk]
-  (binding [*tracing-context* (volatile! #{})]
-    (let [the-atom (atom (thunk))
-          dependencies @*tracing-context*]
-      (doseq [dep dependencies]
-        (add-watch dep the-atom (fn [_ _ _ _]
-                                  (reset! the-atom (thunk)))))
-      (->Reaction the-atom dependencies))))
+(defn cursor
+  "Creates a cursor into an atom, given a lookup path (as per [[get-in]]). Acts
+  like an atom, including supporting updates, watches, and mutable metadata as
+  per [[IReference]].
 
-(defmacro reaction [& body]
+  Keyword opts:
+  - :meta : supply initial metadata
+  "
+  ([the-atom path]
+   (->Cursor the-atom path nil))
+  ([the-atom path & {:keys [meta]}]
+   (->Cursor the-atom path meta)))
+
+(defn ratom
+  "Reactive atom. Behaves like a stock [[atom]], but allows tracking of derefs for
+  reactivity, see [[make-reaction]].
+
+  Keyword opts:
+  - :meta : supply initial metadata
+  "
+  ([value]
+   (->RAtom (atom value)))
+  ([value & {:keys [meta validator]}]
+   (->RAtom (atom value
+                  :meta meta
+                  :validator validator))))
+
+(defn make-reaction
+  "Create a reaction based on a zero-arg function. The function will be called,
+  and any dereferencing of [[ratom]] instances will be tracked. Subsequent
+  updates to the dereferences ratoms will cause the reaction to recompute.
+
+  Supports listeners and mutable metadata like regular atoms, but is read-only.
+  The value can only be changed by updating the upstream ratoms.
+
+  Keyword opts:
+  - :meta : supply initial metadata
+  "
+  ([thunk & {:keys [meta]}]
+   (binding [*tracing-context* (volatile! #{})]
+     (let [the-atom (atom (thunk) :meta meta)
+           dependencies @*tracing-context*]
+       (doseq [dep dependencies]
+         (add-watch dep the-atom (fn [_ _ _ _]
+                                   (reset! the-atom (thunk)))))
+       (->Reaction the-atom dependencies)))))
+
+(defmacro reaction
+  "Macro version of [[make-reaction]], saves a few characters by omitting
+  the `(fn [])`"
+  [& body]
   `(make-reaction (fn* [] ~@body)))
 
 (comment

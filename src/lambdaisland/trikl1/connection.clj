@@ -50,11 +50,14 @@
 
 (defn make-state
   "Create an empty connection state."
-  [{:keys [listeners]
-    :or {listeners {}}}]
-  (atom {:screen nil
-         :size nil
-         :listeners listeners}))
+  [{:keys [listeners make-state]
+    :or {listeners {}}
+    :as opts}]
+  (if make-state
+    (make-state opts)
+    (atom {:screen nil
+           :size nil
+           :listeners listeners})))
 
 (defn add-listener
   "Add an event listener to the connection, identified with the given key.
