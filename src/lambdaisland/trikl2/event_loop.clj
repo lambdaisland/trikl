@@ -26,37 +26,39 @@
                                     (:priority that 100)))))
      :delay-queue (DelayQueue.)})
 
-  (start! []
-    (let [{:keys [^BlockingQueue event-queue ^BlockingQueue delay-queue]} @this]
-      (when-not (:running? @this)
-        (swap! this assoc :runnning? true)
-        (let [delay-thread (util/thread "trikl-delay-handling"
-                             (try
-                               (loop [e (.take delay-queue)]
-                                 (.offer event-queue @e)
-                                 (when (not= ::stop (:type @e))
-                                   (recur (.take delay-queue))))
-                               (catch Throwable t
-                                 (println "delay-error:" t))))
-              event-thread (util/thread "trikl-event-handling"
-                             (loop [e (.take event-queue)]
-                               (if (not= ::stop (:type e))
-                                 (do
-                                   (try
-                                     (obj/call this 'on-event e)
-                                     (catch Throwable t
-                                       (println "error handling event:" e "\n" t)))
-                                   (recur (.take event-queue)))
-                                 (swap! this assoc :running? false))))]
-          (.start ^Thread delay-thread)
-          (.start ^Thread event-thread)))))
+  (start! [{:keys [^BlockingQueue event-queue
+                   ^BlockingQueue delay-queue
+                   running?]}]
+    (when-not running?
+      (swap! this assoc :runnning? true)
+      (let [delay-thread (util/thread "trikl-delay-handling"
+                           (try
+                             (loop [e (.take delay-queue)]
+                               (.offer event-queue @e)
+                               (when (not= ::stop (:type @e))
+                                 (recur (.take delay-queue))))
+                             (catch Throwable t
+                               (println "delay-error:" t))))
+            event-thread (util/thread "trikl-event-handling"
+                           (loop [e (.take event-queue)]
+                             (if (not= ::stop (:type e))
+                               (do
+                                 (try
+                                   (obj/call this 'on-event e)
+                                   (catch Throwable t
+                                     (println "error handling event:" e "\n" t)))
+                                 (recur (.take event-queue)))
+                               (swap! this assoc :running? false))))]
+        (.start ^Thread delay-thread)
+        (.start ^Thread event-thread))))
 
-  (stop! []
-    (obj/call this 'enqueue {:type ::stop
-                             :delay-ms 0
-                             :priority -1}))
+  (stop! [$]
+    (obj/call $ 'enqueue {:type ::stop
+                          :delay-ms 0
+                          :priority -1}))
 
-  (enqueue [e]
+  (enqueue [{:keys [^BlockingQueue event-queue
+                    ^BlockingQueue delay-queue]} e]
     (if-let [ms (:delay-ms e)]
-      (.offer ^BlockingQueue (:delay-queue @this) (util/delayed e ms))
-      (.offer ^BlockingQueue (:event-queue @this) e))))
+      (.offer delay-queue (util/delayed e ms))
+      (.offer event-queue e))))

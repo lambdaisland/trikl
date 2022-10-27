@@ -1,6 +1,6 @@
 (ns lambdaisland.trikl1.ratom
   "Reagent-esque implementations of reactive atoms and cursors."
-  (:import (clojure.lang IAtom IAtom2 IDeref IMeta IRef IReference)))
+  (:import (clojure.lang IAtom IAtom2 IDeref IMeta IRef IReference ILookup)))
 
 (set! *warn-on-reflection* true)
 (def ^:dynamic *tracing-context* nil)
@@ -140,7 +140,12 @@
   (deref [this]
     (when *tracing-context*
       (vswap! *tracing-context* conj this))
-    @the-atom))
+    @the-atom)
+
+  ;; cheeky extension, allow direct destructuring of `this` is sos objects
+  ILookup
+  (valAt [this k] (get @the-atom k))
+  (valAt [this k not-found] (get @the-atom k not-found)))
 
 (definterface IReaction
   (stopReaction []))

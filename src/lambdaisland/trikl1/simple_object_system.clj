@@ -62,11 +62,14 @@
     (call-with-klass (:sos/klass klass) klass obj method args)))
 
 (defn- validate-schema-fn [schema]
-  (fn [val]
-    (when-not (m/validate schema val)
-      (throw (ex-info "Invalid object state"
-                      (m/explain schema val))))
-    true))
+  (let [schema (if (map? schema)
+                 (into [:map] schema)
+                 schema)]
+    (fn [val]
+      (when-not (m/validate schema val)
+        (throw (ex-info "Invalid object state"
+                        (m/explain schema val))))
+      true)))
 
 (defn has-method? [obj-or-klass method]
   (if (instance? clojure.lang.IAtom obj-or-klass)
@@ -79,7 +82,7 @@
   "Instantiate a new object"
   [klass opts]
   (let [state (if (has-method? klass 'prep)
-                (call-with-klass (:sos/klass klass) klass klass 'prep [opts])
+                (call-with-klass (:sos/klass klass) klass opts 'prep nil)
                 opts)
         klass (merge klass (meta state))]
     (cond->
@@ -106,7 +109,7 @@
                 (seq supers)
                 (assoc :sos/superklass (first supers)))
               (map (fn [[sym argv & body]]
-                     [`'~sym `(fn ~(into '[this] argv) ~@body)]))
+                     [`'~sym `(fn ~argv ~@body)]))
               body))))
 
 (defn with
@@ -115,25 +118,28 @@
   [obj m]
   (instance (meta obj) (merge @obj m)))
 
+(defn setk [obj k v]
+  (swap! obj assoc k v))
+
 (comment
   (def MyObj
     {:malli/schema [:map [:x int?] [:y int?] [:z int?]]
-     :to-string (fn [this]
-                  (let [{:keys [x y z]} @this]
+     :to-string (fn [{:keys [x y z]}]
+                  (let [ @this]
                     (str "x:" x " y:" y " z:" z)))})
 
   (defklass BaseObj []
-    (do-thing []
-      (println "doing thing" @this)))
+    (do-thing [{:keys [x y z]}]
+      (println "doing thing" x y z)))
 
   (defklass MyObj [BaseObj]
     :- [:map [:x int?] [:y int?] [:z int?]]
     (prep [opts]
       (merge {:x 1 :y 1 :z 1} opts))
-    (init [opts]
-      (swap! this update :z + 3))
-    (inc-x []
-      (swap! this inc :x)))
+    (init [$ opts]
+      (swap! $ update :z + 3))
+    (inc-x [$]
+      (swap! $ inc :x)))
 
   yObj
   (call (instance MyObj {:x 2}) 'do-thing)

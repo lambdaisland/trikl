@@ -30,7 +30,7 @@
      :size      nil
      :listeners listeners})
 
-  (init [_]
+  (init [_ _]
     (let [event-loop (obj/instance event-loop/EventLoop
                                    {:on-event #(obj/call this 'on-event %2)})]
       (obj/call event-loop 'start!)
@@ -38,22 +38,21 @@
                  (fn [_ _ _ _] (obj/call this 'adjust-screen-size!)))
       (swap! this assoc ::event-loop event-loop)))
 
-  (on-event [e]
+  (on-event [_ e]
     (println "got event" this e))
 
-  (mount [component]
+  (mount [_ component]
     )
 
-  (adjust-screen-size! []
-    (let [{:keys [size screen]} @this
-          [w h]                 size]
-      (when size
-        (cond
-          (not screen)
-          (swap! this assoc :screen (screen/new-screen w 1))
+  (adjust-screen-size! [{[w h] :size, screen :screen :as $}]
+    (when size
+      (cond
+        (not screen)
+        (swap! $ assoc :screen (screen/new-screen w 1))
 
-          (not= w (first (:size screen)))
-          (swap! this update :screen screen/resize [w (second (:size screen))]))))))
+        (not= w (first (:size screen)))
+        (swap! $ update :screen screen/resize [w (second (:size screen))])
+        ))))
 
 (do
   (defonce ss (telnet/server-socket 9999))
@@ -97,3 +96,9 @@
     (conn))
 
   #_(conn/shutdown (conn)))
+
+(deftype XXX []
+  )
+
+(let [{:keys [foo]} (XXX.)]
+  foo)
