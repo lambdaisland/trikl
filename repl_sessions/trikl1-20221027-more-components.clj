@@ -17,10 +17,42 @@
 (set! *warn-on-reflection* true)
 (set! *math-context* :warn-on-boxed)
 
-(obj/defklass Surface []
-  :- {:x int? :y int? :width int? :height int?}
+(obj/defklass ConnectionState [])
 
-  )
+(obj/defklass Surface []
+  :- {:x int? :y int? :width int? :height int? :matrix [:fn util/atom?]}
+  (put-char [{:keys [x y height width matrix]} x' y' charel]
+    (if (and (< y' height)
+             (< x' width))
+      (swap! matrix assoc-in [(+ y y') (+ x x')] charel)
+      (println "out of bounds"
+               y' '< height '/
+               x' '< width)))
+
+  (subsurface [{:keys [x y height width matrix]} x' y' w h]
+    (obj/instance
+     Surface
+     {:matrix matrix
+      :x (+ x x')
+      :y (+ y y')
+      :width (min w (- width x'))
+      :height (min h (- height y'))})))
+
+(obj/defklass BaseComponent []
+  (preferred-size [_] [0 0])
+  (minimum-size [$] (obj/call $ 'preferred-size))
+  (maximum-size [$] (obj/call $ 'preferred-size))
+  (draw [{:keys [surface]}]))
+
+(obj/defklass StyledText [BaseComponent]
+  :- {:text string?}
+  (preferred-size [{:keys [^String text]}]
+    [(.length text) 1])
+  (draw [{:keys [surface ^String text fg bg x y]}]
+    (dotimes [i (.length text)]
+      (obj/call
+       'put-char
+       surface (+ x i) y (screen/->Charel (.charAt text i) fg bg)))))
 
 (obj/defklass ConnectionState []
   (prep [{:keys [listeners make-state]
@@ -30,21 +62,21 @@
      :size      nil
      :listeners listeners})
 
-  (init [_ _]
+  (init [$ _]
     (let [event-loop (obj/instance event-loop/EventLoop
-                                   {:on-event #(obj/call this 'on-event %2)})]
+                                   {:on-event #(obj/call $ 'on-event %2)})]
       (obj/call event-loop 'start!)
-      (add-watch this ::resize-screen
-                 (fn [_ _ _ _] (obj/call this 'adjust-screen-size!)))
-      (swap! this assoc ::event-loop event-loop)))
+      (add-watch $ ::resize-screen
+                 (fn [_ _ _ _] (obj/call $ 'adjust-screen-size!)))
+      (swap! $ assoc ::event-loop event-loop)))
 
-  (on-event [_ e]
-    (println "got event" this e))
+  (on-event [$ e]
+    (println "got event" $ e))
 
-  (mount [_ component]
+  (mount [_ root]
     )
 
-  (adjust-screen-size! [{[w h] :size, screen :screen :as $}]
+  (adjust-screen-size! [{[w h :as size] :size, screen :screen :as $}]
     (when size
       (cond
         (not screen)
@@ -72,7 +104,7 @@
      :listeners {::debug prn
                  ::size conn/resize-listener}})
 
-  (defonce conn-loop
+  (def conn-loop
     (future
       (try
         (while true
@@ -86,11 +118,11 @@
           (throw e)))
       (println "conn-loop broke")))
 
-  (obj/call
-   (:event-loop)
-   'enqueue
-   {:type ::test})
-  (keys  @(conn-state))
+  #_(obj/call
+     (:event-loop (conn))
+     'enqueue
+     {:type ::test})
+  #_(keys  @(conn-state))
   (comment
     conn-loop
     (conn))
@@ -99,6 +131,3 @@
 
 (deftype XXX []
   )
-
-(let [{:keys [foo]} (XXX.)]
-  foo)

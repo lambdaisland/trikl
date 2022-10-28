@@ -36,12 +36,12 @@
             [malli.core :as m]))
 
 (defn- call-with-klass [klassname klass obj method args]
-  (println (str klassname "#" method "/" (count args)))
+  (println (str klassname "#" method "/" (inc (count args))))
   (try
     (let [f (get klass method)]
       (cond
         f
-        (apply f obj args)
+        (doto (apply f obj args) prn)
         (:sos/superklass klass)
         (call-with-klass klassname (:sos/superklass klass) obj method args)
         :else
@@ -103,7 +103,7 @@
                         [(second body) (drop 2 body)]
                         [nil body])]
     `(def ~name
-       ~(into (cond-> {:sos/klass `'~name}
+       ~(into (cond-> {:sos/klass `'~(symbol (str (ns-name *ns*)) (str name))}
                 schema
                 (assoc :malli/schema schema)
                 (seq supers)
@@ -120,6 +120,10 @@
 
 (defn setk [obj k v]
   (swap! obj assoc k v))
+
+(defn klass? [klass obj]
+  (= (:sos/klass klass)
+     (:sos/klass (meta obj))))
 
 (comment
   (def MyObj

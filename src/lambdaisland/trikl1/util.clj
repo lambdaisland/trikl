@@ -41,3 +41,6 @@
   {:style/indent [1]}
   [name & body]
   `(Thread. (fn [] ~@body) ~name))
+
+(defn atom? [a]
+  (instance? clojure.lang.IAtom a))
