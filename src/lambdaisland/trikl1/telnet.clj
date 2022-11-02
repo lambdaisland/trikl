@@ -125,7 +125,7 @@
                              ^Charset charset
                              ^CharsetDecoder decoder
                              dispatch
-                             state
+                             ;;state
                              init-sequence
                              reset-sequence]
   conn/TerminalConnection
@@ -135,7 +135,7 @@
       (conn/write this init-sequence))
     ;; Might be preferable to use telnet commands for this, but this'll do.
     #_(conn/request-screen-size out)
-    (conn/start-input-loop this)
+    #_(conn/start-input-loop this)
     this)
   (process-bytes [this {:keys [^ByteBuffer byte-buf ^ByteBuffer next-byte-buf]
                         ;; We allocate a second buffer the first time we've called,
@@ -176,15 +176,16 @@
     (try
       (when reset-sequence
         (conn/write this reset-sequence))
-      (conn/cancel-input-loop this)
+      #_(conn/cancel-input-loop this)
       (.close out)
       (catch Exception e))))
 
 (def telnet-connection
   (conn/wrap-connection
    (fn [{:keys [^Socket client-socket
-                charset]
-         :or {charset "UTF-8"}
+                charset dispatch]
+         :or {charset "UTF-8"
+              dispatch identity}
          :as opts}]
      (map->TelnetConnection
       (update
@@ -195,8 +196,8 @@
          :decoder (io/charset-decoder charset)
          :init-sequence conn/default-init-sequence
          :reset-sequence conn/default-reset-sequence
-         :state (conn/make-state opts)
-         :dispatch conn/default-dispatch}
+         ;;:state (conn/make-state opts)
+         :dispatch dispatch}
         (dissoc opts :listeners))
        :charset
        #(Charset/forName %))))))

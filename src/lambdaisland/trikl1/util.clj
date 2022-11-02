@@ -12,7 +12,10 @@
 (defn char-in-range? [min ch max]
   (<= (long min) (long ch) (long max)))
 
-(defn reduce-idx [f init coll]
+(defn reduce-idx
+  "Like reduce, but passes an additional leading index argument to the reducing
+  function."
+  [f init coll]
   (let [idx (volatile! 0)]
     (reduce (fn [acc x]
               (f (vswap! idx inc) acc x))

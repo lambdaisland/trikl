@@ -28,6 +28,16 @@
   (shutdown [conn])
   (write [conn s]))
 
+(def schema
+  [:map
+   [:in some?]
+   [:out some?]
+   [:charset some?]
+   [:decoder some?]
+   [:dispatch fn?]
+   [:init-sequence string?]
+   [:reset-sequence string?]])
+
 (def default-init-sequence
   "Default sequence we send to the terminal upon initializing a new connection"
   (str term/ALTERNATE-SCREEN ; Switch to alternate screen, so we can revert back to what was on the screen later
@@ -48,19 +58,19 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; State
 
-(defn make-state
-  "Create an empty connection state."
-  [{:keys [listeners make-state]
-    :or {listeners {}}
-    :as opts}]
-  (if make-state
-    (make-state opts)
-    (atom {:screen nil
-           :size nil
-           :listeners listeners})))
+#_(defn make-state
+    "Create an empty connection state."
+    [{:keys [listeners make-state]
+      :or {listeners {}}
+      :as opts}]
+    (if make-state
+      (make-state opts)
+      (atom {:screen nil
+             :size nil
+             :listeners listeners})))
 
-(defn add-listener
-  "Add an event listener to the connection, identified with the given key.
+#_(defn add-listener
+    "Add an event listener to the connection, identified with the given key.
 
   The key must be unique, reusing a key will cause the listener to be replaced.
   The key can be used to remove the listener with [[remove-listener]].
@@ -68,22 +78,22 @@
   The listener is a function which takes a single argument, the event. The
   connection where the event originated from is available as :trikl/connection on the
   event's metadata."
-  [connection key listener]
-  (swap! (:state connection) assoc-in [:listeners key] listener)
-  connection)
+    [connection key listener]
+    (swap! (:state connection) assoc-in [:listeners key] listener)
+    connection)
 
-(defn remove-listener
-  "Remove an event listener previously added with [[add-listener]].
+#_(defn remove-listener
+    "Remove an event listener previously added with [[add-listener]].
 
   This removes the listener that has the given identifying key."
-  [connection key]
-  (swap! (:state connection) update :listeners dissoc key)
-  connection)
+    [connection key]
+    (swap! (:state connection) update :listeners dissoc key)
+    connection)
 
-(defn listeners
-  "Return all registered listener functions without keys."
-  [conn]
-  (-> conn :state deref :listeners vals))
+#_(defn listeners
+    "Return all registered listener functions without keys."
+    [conn]
+    (-> conn :state deref :listeners vals))
 
 (defn input-loop
   "Read bytes from the input stream, decode to characters, and let the Connection
@@ -122,7 +132,7 @@
       (println "Error during input loop" e)
       ;; Return nil, the loop will restart.
       )))
-
+#_
 (defn start-input-loop
   "Starts the input loop in a separate thread (future). The loop will keep running
   until an IOException occurs or it is cancelled."
@@ -140,7 +150,7 @@
              ;; to be delivered.
              (when-not (= :done result)
                (recur (input-loop conn)))))))
-
+#_
 (defn cancel-input-loop
   "Cancel the input loop future, this will possibly interrupt the thread."
   [{:keys [state] :as conn}]
@@ -162,6 +172,7 @@
   [^OutputStream out]
   (.write out ^bytes screen-size-request-sequence))
 
+#_
 (defn resize-listener
   "Keep the connection (client terminal) its :size value up to date by listening
   for :screen-size events. These can have multiple sources, SIGWINCH, telnet."
@@ -169,7 +180,7 @@
   (when-let [s (:screen-size e)]
     (let [state (-> e meta :trikl/connection :state)]
       (swap! state assoc :size (with-meta s {:trikl/message e})))))
-
+#_
 (defn cursor-pos-resize-listener
   "Keep the connection (client terminal) its :size value up to date by listening
   for :cursor-pos events, use in combination with the
@@ -178,7 +189,7 @@
   (when-let [[^long w ^long h] (:cursor-pos e)]
     (let [state (-> e meta :trikl/connection :state)]
       (swap! state assoc :size (with-meta [(inc w) (inc h)] {:trikl/message e})))))
-
+#_
 (defn default-dispatch
   "Default dispatch function for connections, dispatch events to all current
   listeners."
@@ -241,7 +252,7 @@
                       (-> {:type        :screen-size
                            :screen-size [(Long/parseLong rows) (Long/parseLong cols)]}
                           (with-meta {:trikl/source :SIGWINCH}))))))))
-    (start-input-loop this)
+    #_(start-input-loop this)
     this)
   (process-bytes [_ ctx]
     ctx)
@@ -259,7 +270,7 @@
         (exec-stty "+echo" "+icanon"))
       (when reset-sequence
         (write this reset-sequence))
-      (cancel-input-loop this)
+      #_(cancel-input-loop this)
       (.close out)
       (catch Exception e))))
 
@@ -269,11 +280,12 @@
   command line tools directly (as opposed to something accessed over a
   socket/telnet)."
   (wrap-connection
-   (fn [{:keys [in out charset stty?]
-         :or   {in      System/in
-                out     System/out
-                charset "UTF-8"
-                stty?   true}
+   (fn [{:keys [in out charset stty? dispatch]
+         :or   {in       System/in
+                out      System/out
+                charset  "UTF-8"
+                stty?    true
+                dispatch identity}
          :as   opts}]
      (map->StdioConnection
       (update
@@ -283,8 +295,7 @@
          :charset        charset
          :stty?          stty?
          :decoder        (trikl-io/charset-decoder charset)
-         :dispatch       default-dispatch
-         :state          (make-state opts)
+         :dispatch       dispatch
          :init-sequence  default-init-sequence
          :reset-sequence default-reset-sequence}
         (dissoc opts :listeners))
@@ -301,26 +312,3 @@
                               :in (.getInputStream socket)
                               :out (.getOutputStream socket)
                               :stty? false)))))
-
-(comment
-  (def ss (java.net.ServerSocket. 8889))
-
-  (def sc (socket-connection (.accept ss)))
-
-  (.shutdown sc)
-
-  (add-listener sc ::foo #(prn [:got %]))
-
-  (listeners sc)
-
-
-  ((:dispatch sc) sc [:foo "bar"])
-
-  )
-
-
-
-;; ;; gnome-terminal <-> kernel? <-> nc <-> socket
-
-;; #_
-;; (input-loop sc)

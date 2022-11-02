@@ -17,20 +17,31 @@
 (set! *math-context* :warn-on-boxed)
 
 (obj/defklass EventLoop []
-  (prep [{:keys [on-event]}]
-    ^{'on-event on-event}
+  (prep [_]
     {:event-queue (PriorityBlockingQueue.
                    11
                    (comparator (fn [this that]
                                  (< (:priority this 100)
                                     (:priority that 100)))))
-     :delay-queue (DelayQueue.)})
+     :delay-queue (DelayQueue.)
+     :running?    false})
+
+  (on-event [self e]
+    ;; override
+    )
+
+  (enqueue [{:keys [^BlockingQueue event-queue
+                    ^BlockingQueue delay-queue]} e]
+    (if-let [ms (:delay-ms e)]
+      (.offer delay-queue (util/delayed e ms))
+      (.offer event-queue e)))
 
   (start! [{:keys [^BlockingQueue event-queue
                    ^BlockingQueue delay-queue
-                   running?]}]
+                   running?]
+            :as   self}]
     (when-not running?
-      (swap! this assoc :runnning? true)
+      (swap! self assoc :runnning? true)
       (let [delay-thread (util/thread "trikl-delay-handling"
                            (try
                              (loop [e (.take delay-queue)]
@@ -44,21 +55,14 @@
                              (if (not= ::stop (:type e))
                                (do
                                  (try
-                                   (obj/call this 'on-event e)
+                                   (self 'on-event e)
                                    (catch Throwable t
                                      (println "error handling event:" e "\n" t)))
                                  (recur (.take event-queue)))
-                               (swap! this assoc :running? false))))]
+                               (swap! self assoc :running? false))))]
         (.start ^Thread delay-thread)
         (.start ^Thread event-thread))))
 
-  (stop! [$]
-    (obj/call $ 'enqueue {:type ::stop
-                          :delay-ms 0
-                          :priority -1}))
-
-  (enqueue [{:keys [^BlockingQueue event-queue
-                    ^BlockingQueue delay-queue]} e]
-    (if-let [ms (:delay-ms e)]
-      (.offer delay-queue (util/delayed e ms))
-      (.offer event-queue e))))
+  (stop! [self]
+    (self/enqueue {:type ::stop :delay-ms 0 :priority -1}))
+  )
