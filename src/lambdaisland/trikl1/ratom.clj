@@ -142,10 +142,11 @@
       (vswap! *tracing-context* conj this))
     @the-atom)
 
-  ;; cheeky extension, allow direct destructuring of `this` is sos objects
+  ;; cheeky extension, allow direct destructuring of `this` is sos objects. Do
+  ;; make sure these are also tracked (so we deref `this` and not `the-atom`)
   ILookup
-  (valAt [this k] (get @the-atom k))
-  (valAt [this k not-found] (get @the-atom k not-found)))
+  (valAt [this k] (get @this k))
+  (valAt [this k not-found] (get @this k not-found)))
 
 (definterface IReaction
   (stopReaction []))

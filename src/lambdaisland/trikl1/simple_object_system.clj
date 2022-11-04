@@ -221,8 +221,17 @@
   (swap! obj assoc k v))
 
 (defn klass? [klass obj]
-  (= (:sos/klass klass)
-     (:sos/klass (meta obj))))
+  (or (= (:sos/klass klass)
+         (:sos/klass (meta obj)))
+      (when-let [superklass (:sos/superklass (meta obj))]
+        (klass? superklass obj))))
+
+(defn derives-from? [klass superklass]
+  (let [klass (get-klass klass)
+        superklass (get-klass superklass)]
+    (or (= (:sos/klass klass) (:sos/klass superklass))
+        (when-let [sk (:sos/superklass klass)]
+          (derives-from? sk superklass)))))
 
 (comment
   (def MyObj

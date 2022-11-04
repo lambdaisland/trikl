@@ -1,11 +1,10 @@
 (ns lambdaisland.trikl2.window
   (:require
+   [clojure.set :as set]
    [lambdaisland.trikl1.connection :as conn]
    [lambdaisland.trikl1.display :as display]
-   [lambdaisland.trikl1.telnet :as telnet]
-   [lambdaisland.trikl1.term :as term]
-   [lambdaisland.trikl1.util :as util]
    [lambdaisland.trikl1.simple-object-system :as obj]
+   [lambdaisland.trikl1.util :as util]
    [lambdaisland.trikl2.event-loop :as event-loop]
    [lambdaisland.trikl2.surface :as surface]))
 
@@ -45,6 +44,7 @@
 
   (mount [{:keys [event-loop] :as self} root]
     (swap! self assoc :root root)
+    (swap! root assoc :dirty? true)
     (event-loop 'enqueue {:type :redraw}))
 
   (flush! [{:keys [matrix canvas conn] :as self}]
@@ -66,13 +66,32 @@
   (on-screen-size [self {:keys [screen-size]}]
     (swap! self display/resize screen-size))
 
-  (on-redraw [{:keys [size root] :as self} e]
+  (on-redraw [{:keys [size root event-loop] :as self} e]
     (swap! self assoc :canvas (apply display/charel-matrix size))
-    (root 'visit (fn [c] (swap! c assoc :window self)))
-    (root 'draw (obj/create surface/Surface {:x 0 :y 0
-                                             :width (first size)
-                                             :height (first size)
-                                             :window self}))
+    (if (:dirty? root)
+      (root 'draw
+            (obj/create surface/Surface {:x 0 :y 0
+                                         :width (first size)
+                                         :height (first size)
+                                         :window self}))
+      (root 'visit
+            (fn [c]
+              (when (:dirty? c)
+                (c 'draw (obj/create surface/Surface {:x (:x c) :y (:y c)
+                                                      :width (:width c)
+                                                      :height (:height c)
+                                                      :window self}))
+                :prune-children))))
+    (root 'visit
+          (fn [c]
+            (doseq [a (set/difference (:trace c) (:last-trace c))]
+              (add-watch a [::redraw c]
+                         (fn [_ _ _ _]
+                           (swap! c assoc :dirty? true)
+                           (event-loop 'enqueue {:type :redraw}))))
+            (doseq [a (set/difference (:last-trace c) (:trace c))]
+              (remove-watch a [::redraw c]))
+            (swap! c assoc :last-trace (:trace c))))
     (self 'flush!)))
 
 (obj/defklass InlineWindow [Window]

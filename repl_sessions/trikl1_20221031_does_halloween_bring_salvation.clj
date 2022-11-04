@@ -1,15 +1,11 @@
 (ns repl-sessions.trikl1-20221031-does-halloween-bring-salvation
   (:require
-   [lambdaisland.trikl1.connection :as conn]
-   [lambdaisland.trikl1.display :as display]
+   [lambdaisland.trikl1.ratom :as ratom]
+   [lambdaisland.trikl1.simple-object-system :as obj]
    [lambdaisland.trikl1.telnet :as telnet]
    [lambdaisland.trikl1.term :as term]
-   [lambdaisland.trikl1.util :as util]
-   [lambdaisland.trikl1.simple-object-system :as obj]
-   [lambdaisland.trikl2.event-loop :as event-loop]
-   [lambdaisland.trikl2.window :as window]
    [lambdaisland.trikl2.component :as c]
-   [malli.provider :as mp]))
+   [lambdaisland.trikl2.window :as window]))
 
 (defonce windows (atom []))
 
@@ -45,15 +41,24 @@
   (win)
 
   ((win) 'mount
-   (obj/create c/TextLine {:text "hello"
-                           :fg [100 0 0]
+   (obj/create c/StatefulComponent nil)
+   #_
+   (obj/create c/TextLine {:text "hellox"
+                           :fg [0 200 0]
                            :bg nil}))
 
-  (let [e (java.lang.Exception.)]
-    (.setStackTrace e
-                    (into-array StackTraceElement
-                                (concat [(StackTraceElement. "foo" "bar" "baz" 123)]
-                                        (.getStackTrace e)             )))
-    (throw e))
-  (.getStackTrace (java.lang.Throwable.))
-  #_(conn/shutdown (conn)))
+  (swap! c/state update :count inc)
+
+
+  #_(conn/shutdown (conn))
+
+  (def state (ratom/ratom {:count 0}))
+  (swap! state update :count inc)
+  (defn my-compo [caption]
+    [c/Text {:fg [0 0 200]
+             :bg [255 255 255]} caption "=" (:count @state)
+     "\n" "hello"])
+  (:root (win))
+
+  ((win) 'mount
+   (c/hiccup->component [my-compo "GO!"]) ))

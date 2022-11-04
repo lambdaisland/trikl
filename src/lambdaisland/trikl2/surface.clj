@@ -33,6 +33,7 @@
              (fn [m]
                (util/reduce-idx
                 (fn [idx m ch]
+                  (prn '[x x' idx] [x x' idx])
                   (if (< (+ x' idx) width)
                     (assoc-in m [(+ y y') (+ x x' idx)]
                               (display/->Charel ch fg bg))

@@ -16,7 +16,7 @@
   "Like reduce, but passes an additional leading index argument to the reducing
   function."
   [f init coll]
-  (let [idx (volatile! 0)]
+  (let [idx (volatile! -1)]
     (reduce (fn [acc x]
               (f (vswap! idx inc) acc x))
             init
