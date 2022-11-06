@@ -2,6 +2,7 @@
   "Telnet connection implementation"
   (:require [lambdaisland.trikl1.connection :as conn]
             [lambdaisland.trikl1.io :as io]
+            [lambdaisland.trikl1.log :as log]
             [lambdaisland.trikl1.input-events :as input-events])
   (:import (java.net SocketOutputStream ServerSocket Socket)
            (javax.net ServerSocketFactory)
@@ -171,6 +172,7 @@
                       input-events/semantic-message
                       (dispatch this)))))
   (write [this s]
+    (log/trace :telnet/write s)
     (.write out (.getBytes ^String s charset)))
   (shutdown [this]
     (try

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration monitorInterval="5">
+  <Appenders>
+    <!-- <Console name="Console"> -->
+    <!--   <JsonLayout complete="false" compact="false" eventEol="true" properties="true" objectMessageAsJsonObject="true" /> -->
+    <!--   <!-\- <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/> -\-> -->
+    <!-- </Console> -->
+    <File name="LogFile" fileName="logs/trikl.log">
+      <PatternLayout>
+        <Pattern>[%T] %d{HH:mm:ss.nnnn} [%p] %c{6.}:%L %K%n</Pattern>
+      </PatternLayout>
+    </File>
+  </Appenders>
+  <Loggers>
+    <!-- <Logger name="lambdaisland.trikl1.simple-object-system" level="DEBUG"></Logger>  -->
+    <!-- <Logger name="lambdaisland.trikl2.event-loop" level="DEBUG"></Logger>  -->
+    <!-- <Logger name="lambdaisland.trikl2.window" level="DEBUG"></Logger>  -->
+    <Root level="TRACE">
+      <AppenderRef ref="LogFile"/>
+    </Root>
+  </Loggers>
+</Configuration>

@@ -9,6 +9,7 @@
   (:require [clojure.java.io :as io]
             [lambdaisland.trikl1.input-events :as input-events]
             [lambdaisland.trikl1.term :as term]
+            [lambdaisland.trikl1.log :as log]
             [lambdaisland.trikl1.io :as trikl-io]
             [lambdaisland.trikl1.util :as util])
   (:import (java.io InputStream IOException OutputStream StringWriter)
@@ -219,6 +220,14 @@
                (io/copy (.getInputStream process) out)
                (.toString out)))}))
 
+(defn request-stty-size
+  [conn]
+  (let [out (:out (exec-stty "size"))]
+    (when-let [[_ rows cols] (re-find #"(\d+) (\d+)" out)]
+      ((:dispatch conn) conn
+       {:type        :screen-size
+        :screen-size [(Long/parseLong rows) (Long/parseLong cols)]}))))
+
 (defn wrap-connection
   "Decorate a connection factory function so it calls the connection's [[init]]
   method, and calls its shutdown upon application shutdown."
@@ -241,11 +250,12 @@
       (exec-stty "-echo" "-icanon"))
     (when init-sequence
       (write this init-sequence))
-    (request-screen-size out)
+    #_(request-screen-size out)
+    (request-stty-size this)
     (Signal/handle
      (Signal. "WINCH")
      (reify SignalHandler
-       (^void handle [this ^Signal s]
+       (^void handle [_ ^Signal s]
         (let [out (:out (exec-stty "size"))]
           (when-let [[_ rows cols] (re-find #"(\d+) (\d+)" out)]
             (dispatch this
@@ -263,6 +273,7 @@
                       input-events/semantic-message
                       (dispatch this)))))
   (write [this s]
+    (log/trace :conn/write s)
     (.write out (.getBytes ^String s charset)))
   (shutdown [this]
     (try

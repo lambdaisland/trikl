@@ -4,6 +4,7 @@
   Replaces trikl1.screen, but inverses the relationship between display/screen and connection."
   (:require [lambdaisland.trikl1.term :as term]
             [lambdaisland.trikl1.util :as util]
+            [lambdaisland.trikl1.log :as log]
             [lambdaisland.trikl1.connection :as conn])
   (:import (clojure.lang PersistentVector)
            (java.lang StringBuilder)
@@ -46,17 +47,19 @@
   "Write commands to move the cursor to a new location, and update the cursor
   state accordingly."
   [^StringBuilder sb {:keys [cursor] :as display} target]
+  (log/trace :display/moving-relative {:from cursor :to target})
   (.append sb (term/move-relative cursor target))
   (assoc display :cursor target))
 
 (defn diff-row [^StringBuilder sb row-idx display ^Iterable old ^Iterable new]
   (let [^Iterator old-it (if old (.iterator old) NULL_ITERATOR)
         ^Iterator new-it (if new (.iterator new) NULL_ITERATOR)]
-    (loop [display  display
+    (loop [display display
            col-idx 0
            streak? false
            old-ch  (and (.hasNext old-it) (.next old-it))
            new-ch  (and (.hasNext new-it) (.next new-it))]
+      (log/trace :diff-row/char-diff {:old old-ch :new new-ch})
       (let [old-next? (.hasNext old-it)
             new-next? (.hasNext new-it)]
         (if (= old-ch new-ch)
@@ -70,17 +73,18 @@
             display)
           ;; charel difference
           (let [{:keys [char fg bg] :or {char \space}} new-ch
-                fg? (not= fg (:fg display))
-                bg? (not= bg (:bg display))
-                {:keys [cursor] :as display} (if streak?
-                                               display
-                                               (term-move-relative sb display [col-idx row-idx]))]
+                fg?                                    (not= fg (:fg display))
+                bg?                                    (not= bg (:bg display))
+                {:keys [cursor] :as display}           (if streak?
+                                                         display
+                                                         (term-move-relative sb display [col-idx row-idx]))]
             (when fg? (.append sb (term/foreground-color-rgb fg)))
             (when bg? (.append sb (term/background-color-rgb bg)))
             (.append sb char)
             (let [new-display (assoc (if (or fg? bg?) new-ch display)
                                      :cursor
-                                     (update cursor 0 inc))]
+                                     (doto (update cursor 0 inc)
+                                       (#(log/trace :new-cursor %))))]
               (if new-next?
                 (recur new-display
                        (inc col-idx)
@@ -120,14 +124,16 @@
             display))))))
 
 (defn resize [{:keys [size matrix] :as display} [^long width ^long height]]
+  (log/info :display/resizing {:from size :to [width height]})
   (let [[^long orig-width ^long orig-height] size
+
         resize-line (if (<= width orig-width)
                       #(vec (take width %))
-                      #(into % (repeat (- orig-width width) BLANK)))
+                      #(into % (repeat (- width orig-width) BLANK)))
         matrix (if (<= height orig-height)
                  (mapv resize-line (take height matrix))
                  (into (mapv resize-line matrix)
-                       (charel-matrix (- height orig-height) width)))]
+                       (charel-matrix width (- height orig-height))))]
     (assoc display
            :size [width height]
            :matrix matrix)))

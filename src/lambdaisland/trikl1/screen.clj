@@ -2,6 +2,7 @@
   "Representation of terminal state, and screen-level diffing (committing)."
   (:require [lambdaisland.trikl1.term :as term]
             [lambdaisland.trikl1.util :as util]
+            [lambdaisland.trikl1.log :as log]
             [lambdaisland.trikl1.connection :as conn])
   (:import (clojure.lang PersistentVector)
            (java.lang StringBuilder)

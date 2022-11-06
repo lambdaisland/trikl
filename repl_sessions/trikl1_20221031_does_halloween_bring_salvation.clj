@@ -53,11 +53,14 @@
   #_(conn/shutdown (conn))
 
   (def state (ratom/ratom {:count 0}))
+
   (swap! state update :count inc)
+
   (defn my-compo [caption]
     [c/Text {:fg [0 0 200]
              :bg [255 255 255]} caption "=" (:count @state)
      "\n" "hello"])
+
   (:root (win))
 
   ((win) 'mount

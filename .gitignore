@@ -3,3 +3,4 @@
 target
 repl
 scratch.clj
+logs/trikl.log

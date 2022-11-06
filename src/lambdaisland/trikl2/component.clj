@@ -70,7 +70,7 @@
   (-draw [self surface]
     (self 'render)
     (binding [ratom/*tracing-context* nil]
-      (prn "children:" (:children self))
+      #_(prn "children:" (:children self))
       (when (seq (:children self))
         ((first (:children self)) 'draw surface)))))
 

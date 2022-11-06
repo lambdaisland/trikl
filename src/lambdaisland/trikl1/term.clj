@@ -2,7 +2,8 @@
   "Terminal (VT100/ANSI/...) commands
 
   Not being very rigorous about this stuff, just hard coding the bits that we
-  need and that seem to be broadly supported. This is a stamp collection.")
+  need and that seem to be broadly supported. This is a stamp collection."
+  (:require [lambdaisland.trikl1.log :as log]))
 
 (def ESC
   "The escape byte (27) as a char"
@@ -32,6 +33,7 @@
 (defn move-relative
   "Move cursor from current position to new position via relative commands"
   [[^long from-col ^long from-row] [^long to-col ^long to-row]]
+  (log/trace :term/moving-relative {:from [from-col from-row] :to [to-col to-row]})
   (str
    (when (< to-col from-col)
      (control-sequence (- from-col to-col) (:left relative-moves)))

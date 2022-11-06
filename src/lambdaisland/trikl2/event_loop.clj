@@ -1,11 +1,12 @@
 (ns lambdaisland.trikl2.event-loop
   (:require
    [lambdaisland.trikl1.connection :as conn]
+   [lambdaisland.trikl1.log :as log]
    [lambdaisland.trikl1.screen :as screen]
+   [lambdaisland.trikl1.simple-object-system :as obj]
    [lambdaisland.trikl1.telnet :as telnet]
    [lambdaisland.trikl1.term :as term]
-   [lambdaisland.trikl1.util :as util]
-   [lambdaisland.trikl1.simple-object-system :as obj])
+   [lambdaisland.trikl1.util :as util])
   (:import (java.util.concurrent Delayed
                                  DelayQueue
                                  PriorityBlockingQueue
@@ -32,6 +33,7 @@
 
   (enqueue [{:keys [^BlockingQueue event-queue
                     ^BlockingQueue delay-queue]} e]
+    (log/trace :event-loop/enqueueing e)
     (if-let [ms (:delay-ms e)]
       (.offer delay-queue (util/delayed e ms))
       (.offer event-queue e)))
@@ -64,5 +66,4 @@
         (.start ^Thread event-thread))))
 
   (stop! [self]
-    (self/enqueue {:type ::stop :delay-ms 0 :priority -1}))
-  )
+    (self 'enqueue {:type ::stop :delay-ms 0 :priority -1})))

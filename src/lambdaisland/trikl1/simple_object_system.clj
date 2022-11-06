@@ -37,52 +37,61 @@
    [clojure.string :as str]
    [clojure.walk :as walk]
    [lambdaisland.trikl1.ratom :as ratom]
-   [malli.core :as m])
+   [lambdaisland.trikl1.log :as log]
+   [malli.core :as m]
+   [malli.util :as mu])
   (:import (clojure.lang IAtom IAtom2 IDeref IMeta
                          IRef IReference ILookup
                          IFn)))
 
-
 (defn get-klass [o]
   (cond
+    (nil? o)
+    o
+
     (var? o)
     (get-klass @o)
+
     (:sos/klass-var o)
     (merge (get-klass (dissoc @(:sos/klass-var o) :sos/klass-var))
            o)
+
     (:sos/klass o)
     o
-    (nil? o)
-    nil
+
     :else
     (get-klass (meta o))))
 
+(defn superklass [o]
+  (get-klass (:sos/superklass (get-klass o))))
+
 (defn- call-with-klass [klassname klass obj method args]
-  (println (str klassname "#" method "/" (inc (count args))))
   (let [f (get klass method)]
     (cond
       f
       (try
-        (apply f obj args)
+        (do
+          (log/trace :obj/call (str klassname "#" method "/" (inc (count args))))
+          (apply f obj args))
         (catch clojure.lang.ArityException e
           (if (and f (= (.-name e) (.getName (.getClass f))))
             (throw (clojure.lang.ArityException. (.-actual e)
                                                  (str klassname "#" method)))
             (throw e)))
-        (catch Throwable e
-          (println (str klassname "#" method) e)
-          #_(.setStackTrace
-             e
-             (into-array StackTraceElement
-                         (cons (StackTraceElement.
-                                (str klassname)
-                                (str method)
-                                (str (:ns (meta f)))
-                                (:line (meta f) -1))
-                               (.getStackTrace e))))
-          (throw e)))
-      (:sos/superklass klass)
-      (call-with-klass klassname (get-klass (:sos/superklass klass)) obj method args)
+        #_(catch Throwable e
+            (println (str klassname "#" method) e)
+            #_(.setStackTrace
+               e
+               (into-array StackTraceElement
+                           (cons (StackTraceElement.
+                                  (str klassname)
+                                  (str method)
+                                  (str (:ns (meta f)))
+                                  (:line (meta f) -1))
+                                 (.getStackTrace e))))
+            (throw e)))
+      (superklass klass)
+      (call-with-klass klassname (superklass klass) obj method args)
       :else
       (throw (java.lang.UnsupportedOperationException.
               (str "Method " method " not found on " klassname "<" @obj ">"))))))
@@ -92,6 +101,9 @@
   [obj method & args]
   (let [klass (get-klass obj)]
     (call-with-klass (:sos/klass klass) klass obj method args)))
+
+(defn supercall [obj method & args]
+  (call-with-klass (:sos/klass (get-klass obj)) (superklass obj) obj method args))
 
 (defmacro create-obj-type []
   (let [ratom-def (walk/postwalk-replace
@@ -130,20 +142,29 @@
                    :validator validator))))
 
 (defn- validate-schema-fn [schema]
-  (let [schema (if (map? schema)
-                 (into [:map] schema)
-                 schema)]
-    (fn [val]
-      (when-not (m/validate schema val)
-        (throw (ex-info "Invalid objekt state"
-                        (m/explain schema val))))
-      true)))
+  (fn [val]
+    (when-not (m/validate schema val)
+      (throw (ex-info "Invalid objekt state"
+                      (m/explain schema val))))
+    true))
 
 (defn has-method? [obj-or-klass method]
   (let [k (get-klass obj-or-klass)]
     (or (contains? k method)
         (when-let [super (:sos/superklass k)]
           (has-method? super method)))))
+
+(defn malli-schema [klass]
+  (loop [klass klass
+         schema nil]
+    (let [schema (mu/merge schema
+                           (as-> (:malli/schema klass) $
+                             (if (map? $)
+                               (into [:map] $)
+                               $)))]
+      (if (:sos/superklass klass)
+        (recur (superklass klass) schema)
+        schema))))
 
 (defn create
   "Instantiate a new objekt"
@@ -154,7 +175,8 @@
          state (if (has-method? klass 'prep)
                  (call-with-klass (:sos/klass klass) klass opts 'prep nil)
                  opts)
-         klass (merge klass (meta state))]
+         klass (merge klass (meta state))
+         schema (malli-schema klass)]
      (cond->
          (new-objekt
           state
@@ -162,27 +184,17 @@
                            {:sos/klass (:sos/klass klass)
                             :sos/klass-var klass-var}
                            klass)}
-            (:malli/schema klass)
+            schema
             (assoc :validator
-                   (validate-schema-fn (:malli/schema klass)))))
+                   (validate-schema-fn schema))))
        (has-method? klass 'init)
        (doto (call 'init opts))))))
 
 (defn- method-impl [klassname [sym argv & body :as form]]
   [`'~sym
-   `(with-meta (fn ~(symbol (str klassname "#" sym)) ~argv
-                 ~@(walk/postwalk
-                    (fn [f]
-                      (if (and (list? f)
-                               (qualified-symbol? (first f))
-                               (= "self" (namespace (first f))))
-                        `(call ~(first argv)
-                               '~(symbol (name (first f)))
-                               ~@(rest f))
-                        f))
-                    body))
-      '~(assoc (meta form)
-               :ns (symbol (str *ns*))))])
+   (with-meta `(fn ~(symbol (str klassname "#" sym)) ~argv
+                 ~@body)
+     (meta form))])
 
 (defmacro defklass
   "Just a boat full of sugar"
