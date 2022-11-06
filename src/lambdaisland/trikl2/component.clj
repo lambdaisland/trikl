@@ -36,7 +36,7 @@
 (obj/defklass TextLine [Component]
   :- {:text string? :fg any? :bg any?}
   (preferred-size [{:keys [text]}]
-    [1 (.length text)])
+    [(.length text) 1])
 
   (-draw [{:keys [text fg bg]} surface]
     (surface 'write-line 0 0 text fg bg)))
@@ -49,8 +49,8 @@
        :bg bg
        :lines lines}))
   (preferred-size [{:keys [lines]}]
-    [(count lines)
-     (apply max (map #(.length %) lines))])
+    [(apply max (map #(.length %) lines))
+     (count lines)])
   (-draw [{:keys [fg bg lines]} surface]
     (util/reduce-idx
      (fn [idx _ line]
@@ -61,8 +61,8 @@
 (obj/defklass ThunkComponent [Component]
   (init [self _]
     (self 'render))
-  (preferred-size [{:keys [component]}]
-    (component 'preferred-size))
+  (preferred-size [{:keys [children]}]
+    ((first children) 'preferred-size))
   (render [{:keys [thunk] :as self}]
     (swap! self
            assoc :children

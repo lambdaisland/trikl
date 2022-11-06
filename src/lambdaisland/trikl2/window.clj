@@ -14,9 +14,8 @@
   :- {:input-loop some?
       :event-loop some?
       :size [:tuple int? int?]
-      :cursor [:tuple [:fn #(<= 0 % 8)] int?]
-      :matrix [:and [:vector [:vector some?]]
-               [:fn #(< (count %) 2)]]
+      :cursor [:tuple int? int?]
+      :matrix [:vector [:vector some?]]
       :conn conn/schema}
 
   (prep [{:keys [conn] :as opts}]
@@ -108,8 +107,10 @@
 
 (obj/defklass InlineWindow [Window]
   :- {:lines int?}
-  (prep [{:keys [lines] :as opts}]
-    (assoc ((get Window 'prep) opts) :lines lines))
+  (prep [{:keys [lines auto-grow] :as opts}]
+    (assoc ((get Window 'prep) opts)
+           :lines lines
+           :auto-grow auto-grow))
 
   (on-screen-size [{:keys [root event-loop] :as self} {:keys [screen-size]}]
     (let [[width _] screen-size]
@@ -120,18 +121,22 @@
       (event-loop 'enqueue {:type :redraw :origin :resize})))
 
   (grow-viewport [{:keys [size cursor conn] :as self} lines]
+    (log/debug :inline-window/grow-viewport {:from size :to lines})
     (let [[cols rows] size]
-      (conn/write conn (term/move-relative cursor [0 rows]))
-      (conn/write conn (apply str (repeat lines "\n")))
+      (conn/write conn (term/move-relative cursor [0 (dec rows)]))
+      (conn/write conn (apply str (repeat (- lines rows) "\n")))
       (swap! self
              (fn [self]
                (-> self
-                   (assoc :cursor [0 lines])
+                   (assoc :cursor [0 (dec lines)])
                    (display/resize [cols lines]))))))
 
   (on-redraw [{:keys [size root] :as self} e]
+    (log/debug :root/min-size (root 'minimum-size)
+               :not-zero (not= size [0 0])
+               :auto-grow (:auto-grow self))
     (when (and root (not= size [0 0]) (:auto-grow self))
       (let [[_ lines] (root 'minimum-size)]
-        (when (< lines (second size))
+        (when (< (second size) lines)
           (self 'grow-viewport lines))))
     (obj/supercall self 'on-redraw e)))

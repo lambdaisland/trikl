@@ -22,10 +22,10 @@
                (case mode
                  :inline
                  {:init-sequence  (str "\r" term/HIDE-CURSOR)
-                  :reset-sequence (str term/SHOW-CURSOR)
-                  :auto-grow      true}
+                  :reset-sequence (str term/SHOW-CURSOR)}
                  :fullscreen {}) ]
-              :lines 1})]
+              :lines     1
+              :auto-grow true})]
     (win 'mount (c/hiccup->component [render-fn]))))
 
 (defn telnet-ui [render-fn {:keys [port mode]
@@ -49,15 +49,15 @@
                                                 :inline
                                                 {:client-socket  cs
                                                  :init-sequence  (str "\r" term/HIDE-CURSOR)
-                                                 :reset-sequence (str term/SHOW-CURSOR)
-                                                 :auto-grow      true}
+                                                 :reset-sequence (str term/SHOW-CURSOR)}
                                                 :fullscreen
                                                 {:client-socket cs})]]
            (let [win (obj/create (case mode
                                    :inline     window/InlineWindow
                                    :fullscreen window/Window)
-                                 {:conn  conn
-                                  :lines 1})]
+                                 {:conn      conn
+                                  :lines     1
+                                  :auto-grow true})]
              (swap! wins conj win)
              (win 'mount (c/hiccup->component [render-fn]))))))}))
 
@@ -68,9 +68,9 @@
                        :bg [255 255 255]} "hello" "=" (:count @state)
                "\n" "hello"])
             {:mode :inline})
-    (while true
-      (Thread/sleep 1000)
-      (swap! state update :count inc))
+    #_(while true
+        (Thread/sleep 1000)
+        (swap! state update :count inc))
     (Thread/sleep 1000)
     (swap! state update :count inc))
   @(promise))
