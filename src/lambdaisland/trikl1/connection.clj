@@ -46,6 +46,7 @@
        term/UPPER-LEFT       ; Move the cursor to 0,0 so we know where we are
        term/RESET-STYLES     ; Reset styles (colors etc)
        term/HIDE-CURSOR      ; Hide the cursor
+       term/LINEWRAP-OFF     ; Disable automatic line wrapping, makes tracking the cursor position more predictable
        ))
 
 (def default-reset-sequence
@@ -54,6 +55,23 @@
   (str term/REGULAR-SCREEN ; Switch back from alternate to regular screen, should restore whatever was on the screen
        term/RESET-STYLES   ; Make sure we don't leave any lingering style flags
        term/SHOW-CURSOR    ; Show the cursor again
+       term/LINEWRAP-ON    ; Re-enable automatic line wrapping
+       ))
+
+(def default-inline-init-sequence
+  "Default sequence we send to the terminal upon initializing a new connection"
+  (str "\r"                  ; Move to start of line, so we know at least what column we're in
+       term/RESET-STYLES     ; Reset styles (colors etc)
+       term/HIDE-CURSOR      ; Hide the cursor
+       term/LINEWRAP-OFF     ; Disable automatic line wrapping, makes tracking the cursor position more predictable
+       ))
+
+(def default-inline-reset-sequence
+  "Default sequence we send to the terminal when cleaning up a connection before
+  closing it"
+  (str term/RESET-STYLES   ; Make sure we don't leave any lingering style flags
+       term/SHOW-CURSOR    ; Show the cursor again
+       term/LINEWRAP-ON    ; Re-enable automatic line wrapping
        ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

@@ -1,5 +1,6 @@
 (ns lambdaisland.trikl1.ratom
   "Reagent-esque implementations of reactive atoms and cursors."
+  (:require [lambdaisland.trikl1.log :as log])
   (:import (clojure.lang IAtom IAtom2 IDeref IMeta IRef IReference ILookup)))
 
 (set! *warn-on-reflection* true)
@@ -138,6 +139,10 @@
 
   IDeref
   (deref [this]
+    (when (and (= `lambdaisland.trikl2.component/ProgressBar (:sos/klass (meta this)))
+               *tracing-context*)
+      (log/trace :OHNO (Exception.))
+      #_(throw (Exception. "I SAID NO TRACE")))
     (when *tracing-context*
       (vswap! *tracing-context* conj this))
     @the-atom)

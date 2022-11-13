@@ -14,6 +14,7 @@
 (defrecord Charel [char fg bg])
 
 (def BLANK (->Charel \space nil nil))
+(def NULL_CHAREL (->Charel (char 0) nil nil))
 
 (def blank-line
   (memoize #(vec (repeat % BLANK))))
@@ -24,6 +25,9 @@
                   (second (:size screen))))
   ([width height]
    (vec (repeat height (blank-line width)))))
+
+(defn null-matrix [width height]
+  (vec (repeat height (vec (repeat width NULL_CHAREL)))))
 
 (defn new-screen
   ([[width height]]

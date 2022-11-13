@@ -84,7 +84,7 @@
             (let [new-display (assoc (if (or fg? bg?) new-ch display)
                                      :cursor
                                      (doto (update cursor 0 inc)
-                                       (#(log/trace :new-cursor %))))]
+                                       (#(log/trace :new-cursor % :char (pr-str char)))))]
               (if new-next?
                 (recur new-display
                        (inc col-idx)
@@ -137,6 +137,13 @@
     (assoc display
            :size [width height]
            :matrix matrix)))
+
+#_
+(-> {:size [4 4]
+     :matrix (vec (repeat 4 (vec (repeat 4 (->Charel \# nil nil)))))}
+    (resize [2 2])
+    (resize [4 4])
+    (resize [2 2]))
 
 (defn flush!
   "Flushes the contents of !matrix to the display, and updates the connection state.

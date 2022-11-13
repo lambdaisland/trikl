@@ -21,8 +21,8 @@
               [conn/stdio-connection
                (case mode
                  :inline
-                 {:init-sequence  (str "\r" term/HIDE-CURSOR)
-                  :reset-sequence (str term/SHOW-CURSOR)}
+                 {:init-sequence  conn/default-inline-init-sequence
+                  :reset-sequence conn/default-inline-reset-sequence}
                  :fullscreen {}) ]
               :lines     1
               :auto-grow true})]
@@ -48,8 +48,8 @@
                conn [telnet/telnet-connection (case mode
                                                 :inline
                                                 {:client-socket  cs
-                                                 :init-sequence  (str "\r" term/HIDE-CURSOR)
-                                                 :reset-sequence (str term/SHOW-CURSOR)}
+                                                 :init-sequence  conn/default-inline-init-sequence
+                                                 :reset-sequence conn/default-inline-reset-sequence}
                                                 :fullscreen
                                                 {:client-socket cs})]]
            (let [win (obj/create (case mode
@@ -61,16 +61,17 @@
              (swap! wins conj win)
              (win 'mount (c/hiccup->component [render-fn]))))))}))
 
-(defn -main [& _]
-  (let [state (ratom/ratom {:count 0})]
-    (cli-ui (fn []
-              [c/Text {:fg [0 0 200]
-                       :bg [255 255 255]} "hello" "=" (:count @state)
-               "\n" "hello"])
-            {:mode :inline})
-    #_(while true
-        (Thread/sleep 1000)
-        (swap! state update :count inc))
-    (Thread/sleep 1000)
-    (swap! state update :count inc))
-  @(promise))
+(comment
+  (defn -main [& _]
+    (let [state (ratom/ratom {:count 0})]
+      (cli-ui (fn []
+                [c/Text {:fg [0 0 200]
+                         :bg [255 255 255]} "hello" "=" (:count @state)
+                 "\n" "hello"])
+              {:mode :inline})
+      #_(while true
+          (Thread/sleep 1000)
+          (swap! state update :count inc))
+      (Thread/sleep 1000)
+      (swap! state update :count inc))
+    @(promise)))

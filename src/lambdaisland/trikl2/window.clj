@@ -49,17 +49,20 @@
     (swap! root assoc :dirty? true)
     (event-loop 'enqueue {:type :redraw :origin :mount}))
 
-  (flush! [{:keys [matrix canvas conn] :as self}]
-    (log/trace :flush/matrix matrix)
+  (flush! [{:keys [matrix canvas conn fg bg cursor] :as self}]
     (let [sb (StringBuilder.)
-          new-state (display/diff sb @self matrix canvas)]
+          new-state (display/diff sb {:fg fg :bg bg :cursor cursor} matrix canvas)]
       (log/trace :window/flush {:str (str sb) :new-state (select-keys new-state [:fg :bg :size :cursor])})
       (conn/write conn (str sb))
       (swap! self
              (fn [win]
                (-> win
-                   (assoc :matrix canvas :canvas nil)
-                   (merge new-state))))))
+                   (assoc
+                     :matrix (:canvas win)
+                     :canvas nil
+                     :fg (:fg new-state)
+                     :bg (:bg new-state)
+                     :cursor (:cursor new-state)))))))
 
   (on-event [self e]
     (log/trace :window/on-event {:event e :window {:cursor (:cursor self) :size (:size self)}})
@@ -70,9 +73,8 @@
     (log/trace :window/after-event {:event e :window {:cursor (:cursor self) :size (:size self)}}))
 
   (on-screen-size [{:keys [root event-loop] :as self} {:keys [screen-size]}]
-    (log/info :window/on-screen-size {:new-size screen-size :matrix (:matrix self)})
+    (log/info :window/on-screen-size {:new-size screen-size #_#_:matrix (:matrix self)})
     (swap! self display/resize screen-size)
-    (log/info :window/after-resize {:matrix (:matrix self)})
     (swap! root assoc :dirty? true)
     (event-loop 'enqueue {:type :redraw :origin :resize}))
 
@@ -95,11 +97,15 @@
                   :prune-children))))
       (root 'visit
             (fn [c]
-              (doseq [a (set/difference (:trace c) (:last-trace c))]
+              (doseq [a (set/difference (:trace c) (:last-trace c))
+                      :let [i (rand-int 1000)]]
+                (log/trace :window/watching a :i i)
                 (add-watch a [::redraw c]
-                           (fn [_ _ _ _]
+                           (fn [_ _ old new]
+                             (log/trace :window/redraw-triggered i :old old :new new)
                              (swap! c assoc :dirty? true)
-                             (event-loop 'enqueue {:type :redraw :origin c}))))
+                             (event-loop 'enqueue {:type :redraw :origin (obj/klassname c)})))
+                (log/trace :window/watched a :i i))
               (doseq [a (set/difference (:last-trace c) (:trace c))]
                 (remove-watch a [::redraw c]))
               (swap! c assoc :last-trace (:trace c))))
@@ -112,11 +118,14 @@
            :lines lines
            :auto-grow auto-grow))
 
-  (on-screen-size [{:keys [root event-loop] :as self} {:keys [screen-size]}]
+  (on-screen-size [{:keys [root event-loop conn] :as self} {:keys [screen-size]}]
     (let [[width _] screen-size]
       (log/info :inline-window/on-screen-size {:new-size screen-size :matrix (:matrix self)})
-      (swap! self display/resize [width (:lines self)])
-      (log/info :inline-window/after-resize {:matrix (:matrix self)})
+      (conn/write conn "\r")
+      (swap! self (fn [self]
+                    (-> self
+                        (assoc-in [:cursor 0] 0)
+                        (display/resize [width (:lines self)]))))
       (swap! root assoc :dirty? true)
       (event-loop 'enqueue {:type :redraw :origin :resize})))
 

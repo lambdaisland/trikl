@@ -12,10 +12,12 @@
     </File>
   </Appenders>
   <Loggers>
-    <Logger name="lambdaisland.trikl1.simple-object-system" level="DEBUG"></Logger>
-    <!-- <Logger name="lambdaisland.trikl2.event-loop" level="DEBUG"></Logger>  -->
-    <!-- <Logger name="lambdaisland.trikl2.window" level="DEBUG"></Logger>  -->
+    <!-- <Logger name="lambdaisland.trikl1.simple-object-system" level="DEBUG"></Logger> -->
+    <!-- <Logger name="lambdaisland.trikl2.event-loop" level="DEBUG"></Logger> -->
+    <!-- <Logger name="lambdaisland.trikl2.window" level="DEBUG"></Logger> -->
+    <Logger name="lambdaisland.trikl2.surface" level="DEBUG"></Logger>
     <Logger name="lambdaisland.trikl1.display" level="DEBUG"></Logger>
+    <Logger name="lambdaisland.trikl1.telnet" level="DEBUG"></Logger>
     <Root level="TRACE">
       <AppenderRef ref="LogFile"/>
     </Root>

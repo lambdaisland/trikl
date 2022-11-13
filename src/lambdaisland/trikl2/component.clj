@@ -1,6 +1,7 @@
 (ns lambdaisland.trikl2.component
   (:require
    [clojure.string :as str]
+   [lambdaisland.trikl1.log :as log]
    [lambdaisland.trikl1.ratom :as ratom]
    [lambdaisland.trikl1.simple-object-system :as obj]
    [lambdaisland.trikl1.util :as util]))
@@ -24,13 +25,16 @@
     (let [trace (volatile! #{})
           result (binding [ratom/*tracing-context* trace]
                    (self '-draw surface))]
-      (swap! self assoc
-             :trace (disj @trace self surface)
-             :dirty? false
-             :x (:x surface)
-             :y (:y surface)
-             :width (:width surface)
-             :height (:height surface))
+      (binding [ratom/*tracing-context* nil]
+        (swap! self assoc
+               :trace (apply disj @trace self surface
+                             (:window self)
+                             (:children self))
+               :dirty? false
+               :x (:x surface)
+               :y (:y surface)
+               :width (:width surface)
+               :height (:height surface)))
       result)))
 
 (obj/defklass TextLine [Component]
@@ -68,11 +72,36 @@
            assoc :children
            [(thunk)]))
   (-draw [self surface]
-    (self 'render)
     (binding [ratom/*tracing-context* nil]
+      (self 'render)
       #_(prn "children:" (:children self))
       (when (seq (:children self))
         ((first (:children self)) 'draw surface)))))
+
+(obj/defklass ProgressBar [Component]
+  :- {}
+  (prep [opts]
+    (merge
+     {:bars [\space \▏ \▎ \▍ \▌ \▋ \▊ \▉ \█]}
+     opts))
+  (preferred-size [{:keys [model size]}] [50 1])
+  (minimum-size [self] [1 1])
+  (maximum-size [self] [999 999])
+  (-draw [{:keys [bars model fg bg]} surface]
+    (let [{:keys [amount total]} @model
+          {:keys [width height]} surface
+          progress (double (* width (/ amount total)))]
+      (log/trace :progress-bar/progress progress)
+      (doseq [x (range width)
+              y (range height)
+              :let [ch (cond
+                         (< x (Math/floor progress))
+                         \█
+                         (<= (Math/ceil progress) x)
+                         \space
+                         :else
+                         (get bars (Math/round (* 8 (- progress (Math/floor progress))))))]]
+        (surface 'put-char x y ch fg bg)))))
 
 (defn hiccup->component [form]
   (if-not (vector? form)
@@ -96,7 +125,26 @@
 
 
 (obj/defklass Stack [Component]
-  )
+  (preferred-size [{:keys [children]}]
+    (let [sizes (map #(% 'preferred-size) children)]
+      [(max (map first sizes))
+       (reduce + (map second sizes))]))
+  (minimum-size [{:keys [children]}]
+    (let [sizes (map #(% 'minimum-size) children)]
+      [(max (map first sizes))
+       (reduce + (map second sizes))]))
+  (maximum-size [{:keys [children]}]
+    (let [sizes (map #(% 'maximum-size) children)]
+      [(max (map first sizes))
+       (reduce + (map second sizes))]))
+  (-draw [{:keys [children]} surface]
+    (reduce
+     (fn [row child]
+       (let [[cw ch] (child 'preferred-size)]
+         (child 'draw (surface 'subsurface 0 row (:width surface) ch))
+         (+ row ch)))
+     0
+     children)))
 
 (def state (ratom/ratom {:count 0}))
 

@@ -17,7 +17,7 @@
       :window some?}
 
   (put-char [{:keys [x y width height window]} x' y' ch fg bg]
-    (log/trace :surface/put-char {:x x :y y :width width :height height :x' x' :y' y' :ch ch})
+    (log/trace :surface/put-char {:x x :y y :width width :height height :x' x' :y' y' :ch ch :fg fg :bg bg})
     (if (and (< y' height)
              (< x' width))
       (swap! window

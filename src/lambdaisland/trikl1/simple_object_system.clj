@@ -44,6 +44,10 @@
                          IRef IReference ILookup
                          IFn)))
 
+(def ^:dynamic *validate-schemas*
+  (= "true"
+     (System/getenv "lambdaisland.trikl.validate-schemas")))
+
 (defn get-klass [o]
   (cond
     (nil? o)
@@ -64,6 +68,9 @@
 
 (defn superklass [o]
   (get-klass (:sos/superklass (get-klass o))))
+
+(defn klassname [o]
+  (:sos/klass (get-klass o)))
 
 (defn- call-with-klass [klassname klass obj method args]
   (let [f (get klass method)]
@@ -103,7 +110,7 @@
     (call-with-klass (:sos/klass klass) klass obj method args)))
 
 (defn supercall [obj method & args]
-  (call-with-klass (:sos/klass (get-klass obj)) (superklass obj) obj method args))
+  (call-with-klass (klassname obj) (superklass obj) obj method args))
 
 (defmacro create-obj-type []
   (let [ratom-def (walk/postwalk-replace
@@ -176,7 +183,7 @@
                  (call-with-klass (:sos/klass klass) klass opts 'prep nil)
                  opts)
          klass (merge klass (meta state))
-         schema (malli-schema klass)]
+         schema (when *validate-schemas* (malli-schema klass))]
      (cond->
          (new-objekt
           state

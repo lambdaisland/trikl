@@ -22,6 +22,8 @@
 (def SAVE-CURSOR-POS (control-sequence "s"))
 (def RESTORE-CURSOR-POS (control-sequence "u"))
 (def REQUEST-POSITION (control-sequence "6n"))
+(def LINEWRAP-OFF (control-sequence "?7l"))
+(def LINEWRAP-ON (control-sequence "?7l"))
 
 (defn move-to
   "Move cursor to absolute screen position"
