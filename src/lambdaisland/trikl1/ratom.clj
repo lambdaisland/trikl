@@ -139,10 +139,6 @@
 
   IDeref
   (deref [this]
-    (when (and (= `lambdaisland.trikl2.component/ProgressBar (:sos/klass (meta this)))
-               *tracing-context*)
-      (log/trace :OHNO (Exception.))
-      #_(throw (Exception. "I SAID NO TRACE")))
     (when *tracing-context*
       (vswap! *tracing-context* conj this))
     @the-atom)

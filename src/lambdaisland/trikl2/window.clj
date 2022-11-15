@@ -49,9 +49,9 @@
     (swap! root assoc :dirty? true)
     (event-loop 'enqueue {:type :redraw :origin :mount}))
 
-  (flush! [{:keys [matrix canvas conn fg bg cursor] :as self}]
+  (flush! [{:keys [matrix canvas conn fg bg cursor size] :as self}]
     (let [sb (StringBuilder.)
-          new-state (display/diff sb {:fg fg :bg bg :cursor cursor} matrix canvas)]
+          new-state (display/diff sb {:fg fg :bg bg :cursor cursor :size size} matrix canvas)]
       (log/trace :window/flush {:str (str sb) :new-state (select-keys new-state [:fg :bg :size :cursor])})
       (conn/write conn (str sb))
       (swap! self

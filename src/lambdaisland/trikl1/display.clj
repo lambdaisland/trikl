@@ -51,7 +51,17 @@
   (.append sb (term/move-relative cursor target))
   (assoc display :cursor target))
 
+(defn term-move-absolute
+  "Write commands to move the cursor to a new location, and update the cursor
+  state accordingly."
+  [^StringBuilder sb {:keys [cursor] :as display} target]
+  (log/trace :display/moving-absolute {:from cursor :to target})
+  (.append sb (apply term/move-to target))
+  (assoc display :cursor target))
+
 (defn diff-row [^StringBuilder sb row-idx display ^Iterable old ^Iterable new]
+  (log/trace :diff-row {:idx row-idx :size (:size display) :cursor (:cursor display)
+                        :old (map :char old) :new (map :char new)})
   (let [^Iterator old-it (if old (.iterator old) NULL_ITERATOR)
         ^Iterator new-it (if new (.iterator new) NULL_ITERATOR)]
     (loop [display display
@@ -77,14 +87,32 @@
                 bg?                                    (not= bg (:bg display))
                 {:keys [cursor] :as display}           (if streak?
                                                          display
-                                                         (term-move-relative sb display [col-idx row-idx]))]
+                                                         (term-move-absolute sb display [col-idx row-idx]))]
             (when fg? (.append sb (term/foreground-color-rgb fg)))
             (when bg? (.append sb (term/background-color-rgb bg)))
             (.append sb char)
-            (let [new-display (assoc (if (or fg? bg?) new-ch display)
-                                     :cursor
-                                     (doto (update cursor 0 inc)
-                                       (#(log/trace :new-cursor % :char (pr-str char)))))]
+            (let [new-display (cond-> display
+                                fg?
+                                (assoc :fg (:fg new-ch))
+                                bg?
+                                (assoc :bg (:bg new-ch))
+                                :->
+                                (assoc :cursor
+                                       (let [[^long x y] cursor
+                                             [^long w _] (:size display)
+                                             new-x (inc x)
+                                             new-cursor
+                                             (if (< new-x w)
+                                               [new-x y]
+                                               (do
+                                                 ;; The cursor can't be beyond the end of the line (some terminals
+                                                 ;; might allow this, but we can't assume), if we write a character
+                                                 ;; at the end of the line, then wrap back to the start to get a
+                                                 ;; predictable position.
+                                                 (.append sb "\r")
+                                                 [0 y]))]
+                                         (log/trace :new-cursor new-cursor :char (pr-str char))
+                                         new-cursor)))]
               (if new-next?
                 (recur new-display
                        (inc col-idx)

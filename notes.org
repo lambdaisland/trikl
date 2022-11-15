@@ -9,3 +9,4 @@
   - [[https://gist.github.com/XVilka/8346728][Terminal truecolor support]]
   - https://vt100.net/
   - http://marcocorvi.altervista.org/games/lkpe/tty/tty.htm
+  - https://invisible-island.net/xterm/ctlseqs/ctlseqs.html

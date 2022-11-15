@@ -11,47 +11,68 @@
               (vec
                (for [x (range 20)]
                  {:total 1000
-                  :amount (rand-int 1000)
-                  :delta (rand-nth [-3 -2 -1 1 2 3])}))))
+                  :amount (rand-int 1000) #_(* 10 x)
+                  :delta (rand-nth (remove #{0} (range -10 10)))
+                  :color [(rand-int 255)
+                          (rand-int 255)
+                          (rand-int 255)]}))))
+
+  (reset! model (vec
+                 (for [x (range 20)]
+                   {:total 1000
+                    :amount (rand-int 1000) #_(* 10 x)
+                    :delta (rand-nth (remove #{0} (range -10 10)))
+                    :color [(rand-int 255)
+                            (rand-int 255)
+                            (rand-int 255)]})))
 
   (defn animate-frame! []
     (swap! model
            (fn [ms]
-             (mapv (fn [{:keys [amount total delta]}]
+             (mapv (fn [{:keys [amount delta total] :as m}]
                      (let [amount (+ amount delta)]
                        (cond
                          (< amount 0)
-                         {:amount 0 :total total :delta (- delta)}
+                         (assoc m :amount 0 :delta (- delta))
                          (< total amount)
-                         {:amount total :total total :delta (- delta)}
+                         (assoc m :amount total :delta (- delta))
                          :else
-                         {:amount amount :total total :delta delta})))
+                         (assoc m :amount amount :delta delta))))
                    ms))))
 
-  (animate-frame!)
-
+  ;; (animate-frame!)
+  ;; (swap! model update-in [0 :amount] + 100)
 
   (def stop? false)
 
-  (future
-    (while (not @#'stop?)
-      (Thread/sleep 10)
-      (animate-frame!)))
+  (defonce update-loop
+    (future
+      (while (not @#'stop?)
+        (Thread/sleep 10)
+        (animate-frame!))))
 
   (defn main []
     `[~c/Stack
       ~@(for [i (range 20)]
-          [c/ProgressBar {:fg [(rand-int 255)
-                               (rand-int 255)
-                               (rand-int 255)]
+          [c/ProgressBar {:fg @(ratom/cursor model [i :color])
                           :bg [255 255 255]
                           :model (ratom/cursor model [i])}])])
-
-
+  @(ratom/cursor model [0 :color])
   (def telnet (ui/telnet-ui main {:mode :fullscreen
-                                  :port 9877})))
+                                  :port 9877}))
+
+  (defn win []
+    (last @(:wins telnet))))
+
+(conn/request-screen-size
+ (:out (:conn (win))))
+((:event-loop (win)) 'enqueue
+ {:type :screen-size
+  :screen-size [77 24]})
 
 (:conn-loop telnet)
+(:matrix (win))
+(:canvas (win))
 
 ((:stop! telnet))
 (keys @(:root (last @(:wins telnet))))
